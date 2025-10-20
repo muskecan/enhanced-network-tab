@@ -95,6 +95,7 @@
                         <button class="view-btn" data-view="formatted">Formatted</button>
                         <button class="copy-curl-btn" id="copyCurlBtn">Copy as cURL</button>
                         <button class="repeater-btn" id="repeaterBtn">Send to Repeater</button>
+                        <button class="copy-content-btn" id="copyRequestBtn">Copy</button>
                         <div class="content-search">
                             <input type="text" id="requestSearchInput" placeholder="Search in request..." class="content-search-input">
                             <span id="requestSearchCount" class="search-count"></span>
@@ -125,6 +126,8 @@
                     <div class="view-toggle">
                         <button class="view-btn active" data-view="raw">Raw</button>
                         <button class="view-btn" data-view="formatted">Formatted</button>
+                        <button class="view-btn" data-view="preview" id="responsePreviewBtn" style="display:none;">Preview</button>
+                        <button class="copy-content-btn" id="copyResponseBtn">Copy</button>
                         <div class="content-search">
                             <input type="text" id="responseSearchInput" placeholder="Search in response..." class="content-search-input">
                             <span id="responseSearchCount" class="search-count"></span>
@@ -341,6 +344,9 @@
                     <input type="text" id="responseInterceptSearchInput" placeholder="Search..." class="content-search-input">
                     <span id="responseInterceptSearchCount" class="search-count"></span>
                 </div>
+            </div>
+            <div class="get-warning" style="margin-bottom: 15px;">
+                <p><strong>⚠️ Note:</strong> Due to browser API limitations, only the response body can be modified. Changes to headers, status code, or status text will not be applied.</p>
             </div>
             <div class="intercept-editor">
                 <div class="editor-row">

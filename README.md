@@ -16,6 +16,14 @@ A lightweight Firefox extension for capturing, analyzing, and modifying HTTP/HTT
 - **Column Sorting**: Sort and resize request table columns
 - **Search**: Search through request/response headers and bodies
 
+## Screenshots
+
+### Main Dashboard
+![Enhanced Network Tab Dashboard](readme-pictures/dashboard.png)
+
+### Request Interception
+![Request Interception Modal](readme-pictures/interception.png)
+
 ## Installation
 
 ### From Firefox Add-ons

@@ -299,6 +299,9 @@ const requestSearchCount = document.getElementById('requestSearchCount');
 const modifiedSearchCount = document.getElementById('modifiedSearchCount');
 const responseSearchCount = document.getElementById('responseSearchCount');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
+const copyRequestBtn = document.getElementById('copyRequestBtn');
+const copyResponseBtn = document.getElementById('copyResponseBtn');
+const responsePreviewBtn = document.getElementById('responsePreviewBtn');
 let currentRepeaterTab = 'headers';
 let lastRepeaterResponse = null;
 
@@ -462,6 +465,30 @@ copyCurlBtn.addEventListener('click', () => {
             copyCurlBtn.textContent = 'Copied!';
             setTimeout(() => {
                 copyCurlBtn.textContent = 'Copy as cURL';
+            }, 2000);
+        });
+    }
+});
+
+copyRequestBtn.addEventListener('click', () => {
+    if (selectedRequest) {
+        const rawContent = formatRequestContent(selectedRequest, 'raw');
+        navigator.clipboard.writeText(rawContent).then(() => {
+            copyRequestBtn.textContent = 'Copied!';
+            setTimeout(() => {
+                copyRequestBtn.textContent = 'Copy';
+            }, 2000);
+        });
+    }
+});
+
+copyResponseBtn.addEventListener('click', () => {
+    if (selectedRequest) {
+        const rawContent = formatResponseContent(selectedRequest, 'raw');
+        navigator.clipboard.writeText(rawContent.content).then(() => {
+            copyResponseBtn.textContent = 'Copied!';
+            setTimeout(() => {
+                copyResponseBtn.textContent = 'Copy';
             }, 2000);
         });
     }
@@ -997,7 +1024,19 @@ function displayRequestDetails(request) {
         });
     } else {
         const result = formatResponseContent(request, currentResponseView);
-        if (result.isImage) {
+        
+        // Show/hide Preview button based on HTML content
+        if (result.isHTML) {
+            responsePreviewBtn.style.display = 'inline-block';
+        } else {
+            responsePreviewBtn.style.display = 'none';
+            // If currently on preview view and content is not HTML, switch to raw view
+            if (currentResponseView === 'preview') {
+                currentResponseView = 'raw';
+            }
+        }
+        
+        if (result.isImage || result.isPreview) {
             responseContent.innerHTML = result.content;
         } else {
             responseContent.textContent = result.content;
@@ -1082,6 +1121,7 @@ function formatResponseContent(request, view) {
         .find(([key, value]) => key.toLowerCase() === 'content-type')?.[1] || '';
     
     const isImage = contentType.match(/^image\/(png|jpe?g|gif|svg\+xml|webp|ico|bmp)/i);
+    const isHTMLContent = contentType.includes('html') || isHTML(request.responseBody || '');
     
     if (isImage && request.responseBody && view === 'formatted') {
         // For images, display the image in formatted view
@@ -1104,7 +1144,7 @@ function formatResponseContent(request, view) {
                 imgSrc = `data:${contentType};base64,${btoa(request.responseBody)}`;
             } catch (e) {
                 // If btoa fails, show error
-                return { isImage: false, content: `Error rendering image: ${e.message}` };
+                return { isImage: false, isHTML: false, content: `Error rendering image: ${e.message}` };
             }
         }
         
@@ -1113,7 +1153,30 @@ function formatResponseContent(request, view) {
             <img src="${imgSrc}" alt="Response Image" class="response-image" onerror="this.style.display='none'; this.parentElement.innerHTML += '<div style=\\'padding: 20px; color: #f44336;\\'>Failed to load image</div>';" />
         </div>`;
         
-        return { isImage: true, content: imageHtml };
+        return { isImage: true, isHTML: false, content: imageHtml };
+    }
+    
+    // Handle HTML preview in iframe
+    if (isHTMLContent && request.responseBody && view === 'preview') {
+        let headers = `HTTP/1.1 ${request.statusCode || 'Pending'} ${request.statusLine || ''}\n`;
+        for (const [key, value] of Object.entries(request.responseHeaders || {})) {
+            headers += `${key}: ${value}\n`;
+        }
+        
+        // Create iframe with sandboxed HTML content
+        const htmlContent = request.responseBody
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+        
+        const previewHtml = `<div class="response-preview-container">
+            <div class="response-headers">${headers}</div>
+            <iframe class="response-preview-iframe" sandbox="allow-same-origin" srcdoc="${htmlContent}"></iframe>
+        </div>`;
+        
+        return { isImage: false, isHTML: true, isPreview: true, content: previewHtml };
     }
     
     if (view === 'raw') {
@@ -1127,7 +1190,7 @@ function formatResponseContent(request, view) {
             raw += `\n${request.responseBody}`;
         }
         
-        return { isImage: false, content: raw };
+        return { isImage: false, isHTML: isHTMLContent, content: raw };
     } else {
         // Formatted view - show headers as-is, format body based on content type
         let formatted = `HTTP/1.1 ${request.statusCode || 'Pending'} ${request.statusLine || ''}\n`;
@@ -1140,7 +1203,7 @@ function formatResponseContent(request, view) {
             formatted += '\n' + formatBody(request.responseBody, request.responseHeaders);
         }
         
-        return { isImage: false, content: formatted };
+        return { isImage: false, isHTML: isHTMLContent, content: formatted };
     }
 }
 

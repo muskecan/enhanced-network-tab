@@ -482,6 +482,21 @@ body.column-resizing * {
     background: var(--purple-hover);
 }
 
+.copy-content-btn {
+    margin-left: 10px;
+    padding: 4px 10px;
+    background: var(--info-bg);
+    color: var(--text-inverse);
+    border: 1px solid var(--info-hover);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.copy-content-btn:hover {
+    background: var(--info-hover);
+}
+
 .content-search {
     display: flex;
     align-items: center;
@@ -970,4 +985,21 @@ mark {
 .theme-toggle-btn .theme-label {
     font-size: 11px;
     color: var(--text-secondary);
+}
+
+/* HTML Preview iframe styles */
+.response-preview-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    height: 100%;
+}
+
+.response-preview-iframe {
+    width: 100%;
+    flex: 1;
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    background: var(--bg-primary);
+    min-height: 400px;
 }
