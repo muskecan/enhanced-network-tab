@@ -151,7 +151,7 @@
                 </div>
             </div>
             <div class="get-warning" style="margin-bottom: 15px;">
-                <p><strong>Note:</strong> If you modify this request, the original request will be cancelled and a new request will be sent with your changes. The response will be captured in the extension but the original page won't receive it.</p>
+                <p><strong>Note:</strong> Header modifications are applied natively. URL or Body modifications may require cancelling and resending the request, which means the original page might not receive the response (except for main frame navigations).</p>
             </div>
             <div class="intercept-editor">
                 <div class="editor-row">
@@ -346,7 +346,7 @@
                 </div>
             </div>
             <div class="get-warning" style="margin-bottom: 15px;">
-                <p><strong>⚠️ Note:</strong> Due to browser API limitations, only the response body can be modified. Changes to headers, status code, or status text will not be applied.</p>
+                <p><strong>⚠️ Note:</strong> Headers and Body can be modified. Status code changes may not be supported by the browser API.</p>
             </div>
             <div class="intercept-editor">
                 <div class="editor-row">

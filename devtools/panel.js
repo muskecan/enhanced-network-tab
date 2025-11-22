@@ -1374,6 +1374,8 @@ function showInterceptModal(request) {
     document.getElementById('interceptMethod').value = request.method;
     document.getElementById('interceptUrl').value = request.url;
     document.getElementById('interceptHeaders').value = formatHeaders(request.requestHeaders);
+    document.getElementById('interceptHeaders').placeholder = "";
+    document.getElementById('interceptHeaders').readOnly = false;
     document.getElementById('interceptBody').value = request.requestBody || '';
     
     interceptModal.classList.add('show');

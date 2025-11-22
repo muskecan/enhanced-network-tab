@@ -1,21 +1,24 @@
 let captureEnabled = false;
 let interceptEnabled = false;
 let interceptSettings = {
-  methods: ['POST', 'PUT', 'PATCH', 'DELETE'], // Default methods to intercept
+  methods: ['POST', 'PUT', 'PATCH', 'DELETE'],
   includeGET: false,
-  urlPatterns: [], // URL patterns to intercept (regex strings)
-  excludePatterns: [], // URL patterns to exclude from interception
-  excludeExtensions: ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'woff', 'woff2', 'ttf', 'eot'], // File extensions to exclude
-  interceptResponses: false // Whether to also intercept responses for modification
+  urlPatterns: [],
+  excludePatterns: [],
+  excludeExtensions: ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'woff', 'woff2', 'ttf', 'eot'],
+  interceptResponses: false
 };
 let requests = new Map();
 let activeTabId = null;
 let devtoolsPorts = new Map();
 let pendingRequests = new Map();
-let pendingResponses = new Map(); // For response interception
+let pendingResponses = new Map();
 let requestIdCounter = 0;
 let requestIdMap = new Map();
-let interceptedRequestIds = new Set(); // Track which requests should have their responses intercepted
+let interceptedRequestIds = new Set();
+let pendingUrlModifications = new Map();
+let pendingHeaderModifications = new Map();
+let pendingResponseHeaderIntercepts = new Map();
 
 const MAX_REQUESTS = 100;
 
@@ -68,7 +71,6 @@ function getRequestBody(details) {
 }
 
 function shouldInterceptRequest(details) {
-  // Check if method should be intercepted
   let shouldIntercept = false;
   
   if (interceptSettings.includeGET && details.method === 'GET') {
@@ -81,7 +83,6 @@ function shouldInterceptRequest(details) {
     return false;
   }
   
-  // Check file extensions to exclude
   if (interceptSettings.excludeExtensions.length > 0) {
     const url = new URL(details.url);
     const pathname = url.pathname.toLowerCase();
@@ -96,7 +97,6 @@ function shouldInterceptRequest(details) {
     }
   }
   
-  // Check URL patterns to include
   if (interceptSettings.urlPatterns.length > 0) {
     const matchesIncludePattern = interceptSettings.urlPatterns.some(pattern => {
       try {
@@ -113,7 +113,6 @@ function shouldInterceptRequest(details) {
     }
   }
   
-  // Check URL patterns to exclude
   if (interceptSettings.excludePatterns.length > 0) {
     const matchesExcludePattern = interceptSettings.excludePatterns.some(pattern => {
       try {
@@ -135,7 +134,6 @@ function shouldInterceptRequest(details) {
 
 browser.webRequest.onBeforeRequest.addListener(
   (details) => {
-    // Check if we should process this request
     if (!captureEnabled || details.tabId !== activeTabId || details.tabId === -1) {
       return {};
     }
@@ -164,19 +162,34 @@ browser.webRequest.onBeforeRequest.addListener(
       shouldIntercept: false
     };
     
-    // Check if this request should be intercepted (but don't intercept yet)
     if (interceptEnabled && shouldInterceptRequest(details)) {
       requestData.shouldIntercept = true;
       requestData.intercepted = true;
       requestData.statusLine = 'Intercepted';
       
-      // Mark this request for potential response interception
       if (interceptSettings.interceptResponses) {
         interceptedRequestIds.add(details.requestId);
       }
+      
+      requests.set(requestId, requestData);
+      
+      if (requests.size > MAX_REQUESTS) {
+        const oldestKey = requests.keys().next().value;
+        const oldRequest = requests.get(oldestKey);
+        if (oldRequest) {
+          requestIdMap.delete(oldRequest.originalRequestId);
+        }
+        requests.delete(oldestKey);
+      }
+      
+      notifyDevTools({
+        type: 'newRequest',
+        request: requestData
+      });
+
+      return {};
     }
     
-    // Store in requests since capture is enabled
     requests.set(requestId, requestData);
     
     if (requests.size > MAX_REQUESTS) {
@@ -196,7 +209,7 @@ browser.webRequest.onBeforeRequest.addListener(
     return {};
   },
   { urls: ["<all_urls>"] },
-  ["requestBody"]
+  ["blocking", "requestBody"]
 );
 
 browser.webRequest.onBeforeSendHeaders.addListener(
@@ -221,13 +234,13 @@ browser.webRequest.onBeforeSendHeaders.addListener(
         request: request
       });
       
-      // NOW intercept if needed (after we have headers)
       if (request.shouldIntercept && !pendingRequests.has(details.requestId)) {
         return new Promise((resolve) => {
           const pendingData = {
             ...request,
             resolve: resolve,
-            originalRequestId: details.requestId
+            originalRequestId: details.requestId,
+            stage: 'onBeforeSendHeaders'
           };
           pendingRequests.set(details.requestId, pendingData);
           
@@ -257,7 +270,6 @@ browser.webRequest.onHeadersReceived.addListener(
     const request = requests.get(requestId);
     if (!request) return {};
     
-    // Check if this response should be intercepted
     const shouldInterceptResponse = interceptedRequestIds.has(details.requestId);
     
     const contentType = details.responseHeaders?.find(h => 
@@ -273,16 +285,13 @@ browser.webRequest.onHeadersReceived.addListener(
     const isImageContent = contentType.includes('image/');
     
     if (isTextContent || isImageContent) {
-      
       const filter = browser.webRequest.filterResponseData(details.requestId);
       const decoder = new TextDecoder('utf-8');
       let responseData = [];
       
       if (shouldInterceptResponse) {
-        // Response interception mode
         filter.ondata = event => {
           responseData.push(event.data);
-          // Don't write data yet, wait for user input
         };
         
         filter.onstop = event => {
@@ -298,7 +307,6 @@ browser.webRequest.onHeadersReceived.addListener(
             
             let bodyContent;
             if (isImageContent) {
-              // Convert binary image data to base64
               let binary = '';
               const len = combinedData.byteLength;
               for (let i = 0; i < len; i++) {
@@ -313,7 +321,6 @@ browser.webRequest.onHeadersReceived.addListener(
               request.isBase64 = false;
             }
             
-            // Store response data for modification
             const responseInterceptData = {
               requestId: requestId,
               originalRequestId: details.requestId,
@@ -323,15 +330,13 @@ browser.webRequest.onHeadersReceived.addListener(
               statusCode: details.statusCode,
               statusLine: details.statusLine,
               request: request,
-              isBase64: isImageContent
+              isBase64: isImageContent,
+              stage: 'responseBody'
             };
             
             pendingResponses.set(details.requestId, responseInterceptData);
-            
-            // Remove from intercepted requests tracking
             interceptedRequestIds.delete(details.requestId);
             
-            // Notify DevTools about response interception
             notifyDevTools({
               type: 'interceptResponse',
               response: {
@@ -340,7 +345,8 @@ browser.webRequest.onHeadersReceived.addListener(
                 statusLine: details.statusLine,
                 responseHeaders: details.responseHeaders,
                 responseBody: bodyContent,
-                isBase64: isImageContent
+                isBase64: isImageContent,
+                stage: 'responseBody'
               }
             });
             
@@ -349,8 +355,33 @@ browser.webRequest.onHeadersReceived.addListener(
             filter.close();
           }
         };
+        
+        return new Promise((resolve) => {
+            const pendingHeaderData = {
+              requestId: requestId,
+              originalRequestId: details.requestId,
+              resolve: resolve,
+              responseHeaders: details.responseHeaders,
+              statusCode: details.statusCode,
+              statusLine: details.statusLine,
+              stage: 'responseHeaders',
+              request: request
+            };
+            pendingResponseHeaderIntercepts.set(requestId, pendingHeaderData);
+            
+            notifyDevTools({
+              type: 'interceptResponse',
+              response: {
+                 requestId: requestId,
+                 statusCode: details.statusCode,
+                 statusLine: details.statusLine,
+                 responseHeaders: details.responseHeaders,
+                 stage: 'responseHeaders'
+              }
+            });
+         });
+
       } else {
-        // Normal mode - just capture for display
         filter.ondata = event => {
           responseData.push(event.data);
           filter.write(event.data);
@@ -370,7 +401,6 @@ browser.webRequest.onHeadersReceived.addListener(
             }
             
             if (isImageContent) {
-              // Convert binary image data to base64
               let binary = '';
               const len = combinedData.byteLength;
               for (let i = 0; i < len; i++) {
@@ -380,7 +410,6 @@ browser.webRequest.onHeadersReceived.addListener(
               request.responseBody = base64;
               request.isBase64 = true;
             } else {
-              // Text content
               const text = decoder.decode(combinedData);
               request.responseBody = text.substring(0, 50000);
               request.isBase64 = false;
@@ -500,7 +529,6 @@ function handleDevToolsMessage(msg, port) {
   switch (msg.type) {
     case 'toggleCapture':
       captureEnabled = msg.enabled;
-      // If capture is disabled, also disable intercept
       if (!captureEnabled && interceptEnabled) {
         interceptEnabled = false;
         notifyDevTools({ type: 'interceptStateChanged', enabled: false });
@@ -511,7 +539,6 @@ function handleDevToolsMessage(msg, port) {
       
     case 'toggleIntercept':
       interceptEnabled = msg.enabled;
-      // If intercept is enabled, also enable capture
       if (interceptEnabled && !captureEnabled) {
         captureEnabled = true;
         notifyDevTools({ type: 'captureStateChanged', enabled: true });
@@ -568,7 +595,6 @@ function handleDevToolsMessage(msg, port) {
 }
 
 async function handleForwardRequest(requestId, modifiedRequest) {
-  // Find the pending request by the custom request ID
   let originalRequestId = null;
   let pending = null;
   
@@ -583,109 +609,132 @@ async function handleForwardRequest(requestId, modifiedRequest) {
   if (pending && pending.resolve) {
     const request = requests.get(requestId);
     
-    // Detect if the request was modified
-    const wasModified = modifiedRequest && (
-      modifiedRequest.url !== pending.url ||
-      modifiedRequest.method !== pending.method ||
-      JSON.stringify(modifiedRequest.headers) !== JSON.stringify(pending.requestHeaders) ||
-      modifiedRequest.body !== pending.requestBody
-    );
+    const urlChanged = modifiedRequest && modifiedRequest.url !== pending.url;
+    const methodChanged = modifiedRequest && modifiedRequest.method !== pending.method;
+    const headersChanged = modifiedRequest && JSON.stringify(modifiedRequest.headers) !== JSON.stringify(pending.requestHeaders);
+    const bodyChanged = modifiedRequest && modifiedRequest.body !== pending.requestBody;
+    
+    const wasModified = urlChanged || methodChanged || headersChanged || bodyChanged;
     
     if (wasModified && request) {
-      // Cancel the original request
-      pending.resolve({ cancel: true });
-      pendingRequests.delete(originalRequestId);
-      
-      // Store original request data for comparison
       request.originalUrl = pending.url;
       request.originalMethod = pending.method;
       request.originalHeaders = { ...pending.requestHeaders };
       request.originalBody = pending.requestBody;
       
-      // Store modified request data
       request.modifiedUrl = modifiedRequest.url;
       request.modifiedMethod = modifiedRequest.method;
       request.modifiedHeaders = { ...modifiedRequest.headers };
       request.modifiedBody = modifiedRequest.body;
-      
-      // Update status to show we're resending
-      request.intercepted = false;
-      request.statusLine = 'Resending (Modified)';
       request.wasModified = true;
-      notifyDevTools({
-        type: 'updateRequest',
-        request: request
-      });
       
-      // Send the modified request as a new fetch request
-      try {
-        const fetchOptions = {
-          method: modifiedRequest.method,
-          headers: modifiedRequest.headers
-        };
-        
-        // Add body for methods that support it
-        if (['POST', 'PUT', 'PATCH'].includes(modifiedRequest.method) && modifiedRequest.body) {
-          fetchOptions.body = modifiedRequest.body;
+      if (urlChanged || bodyChanged || methodChanged) {
+        if (request.type === 'main_frame' && modifiedRequest.method === 'GET' && modifiedRequest.url !== pending.url) {
+          pending.resolve({ cancel: true });
+          pendingRequests.delete(originalRequestId);
+          
+          request.intercepted = false;
+          request.statusLine = 'Redirecting (Navigation)';
+          request.statusCode = 307;
+          request.completed = true;
+          
+          notifyDevTools({
+            type: 'updateRequest',
+            request: request
+          });
+          
+          browser.tabs.update(request.tabId, { url: modifiedRequest.url });
+          return;
         }
+
+        pending.resolve({ cancel: true });
+        pendingRequests.delete(originalRequestId);
         
-        const startTime = Date.now();
-        const response = await fetch(modifiedRequest.url, fetchOptions);
-        const duration = Date.now() - startTime;
+        request.intercepted = false;
+        request.statusLine = 'Resending (Modified)';
         
-        // Capture response headers
-        const responseHeaders = {};
-        response.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
+        notifyDevTools({
+          type: 'updateRequest',
+          request: request
         });
         
-        // Capture response body
-        const contentType = response.headers.get('content-type') || '';
-        let responseBody = '';
-        
-        if (contentType.includes('image/')) {
-          // Handle image responses
-          const blob = await response.blob();
-          const arrayBuffer = await blob.arrayBuffer();
-          const uint8Array = new Uint8Array(arrayBuffer);
-          let binary = '';
-          for (let i = 0; i < uint8Array.byteLength; i++) {
-            binary += String.fromCharCode(uint8Array[i]);
+        try {
+          const fetchOptions = {
+            method: modifiedRequest.method,
+            headers: modifiedRequest.headers
+          };
+          
+          if (['POST', 'PUT', 'PATCH'].includes(modifiedRequest.method) && modifiedRequest.body) {
+            fetchOptions.body = modifiedRequest.body;
           }
-          responseBody = btoa(binary);
-          request.isBase64 = true;
-        } else {
-          // Handle text responses
-          responseBody = await response.text();
-          responseBody = responseBody.substring(0, 50000); // Limit size
-          request.isBase64 = false;
+          
+          const startTime = Date.now();
+          const response = await fetch(modifiedRequest.url, fetchOptions);
+          const duration = Date.now() - startTime;
+          
+          const responseHeaders = {};
+          response.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+          
+          const contentType = response.headers.get('content-type') || '';
+          let responseBody = '';
+          
+          if (contentType.includes('image/')) {
+            const blob = await response.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            let binary = '';
+            for (let i = 0; i < uint8Array.byteLength; i++) {
+              binary += String.fromCharCode(uint8Array[i]);
+            }
+            responseBody = btoa(binary);
+            request.isBase64 = true;
+          } else {
+            responseBody = await response.text();
+            responseBody = responseBody.substring(0, 50000);
+            request.isBase64 = false;
+          }
+          
+          request.statusCode = response.status;
+          request.statusLine = `Modified & Resent (${duration}ms)`;
+          request.responseHeaders = responseHeaders;
+          request.responseBody = responseBody;
+          request.completed = true;
+          
+          notifyDevTools({
+            type: 'updateRequest',
+            request: request
+          });
+          
+        } catch (error) {
+          request.statusCode = 0;
+          request.statusLine = `Modification Failed: ${error.message}`;
+          request.completed = true;
+          
+          notifyDevTools({
+            type: 'updateRequest',
+            request: request
+          });
         }
-        
-        // Update request with response data
-        request.statusCode = response.status;
-        request.statusLine = `Modified & Resent (${duration}ms)`;
-        request.responseHeaders = responseHeaders;
-        request.responseBody = responseBody;
-        request.completed = true;
-        
-        notifyDevTools({
-          type: 'updateRequest',
-          request: request
-        });
-        
-      } catch (error) {
-        // Handle fetch errors
-        request.statusCode = 0;
-        request.statusLine = `Modification Failed: ${error.message}`;
-        request.completed = true;
-        
-        notifyDevTools({
-          type: 'updateRequest',
-          request: request
-        });
+        return;
+      }
+      
+      if (headersChanged) {
+         const modifiedHeadersArray = Object.entries(modifiedRequest.headers).map(([name, value]) => ({
+            name,
+            value
+         }));
+         
+         pending.resolve({ requestHeaders: modifiedHeadersArray });
+         pendingRequests.delete(originalRequestId);
+         
+         request.statusLine = 'Forwarded (Headers Modified)';
+         request.intercepted = false;
+         notifyDevTools({ type: 'updateRequest', request: request });
+         return;
       }
     } else {
-      // Request was not modified, just forward it as-is
       pending.resolve({});
       pendingRequests.delete(originalRequestId);
       
@@ -702,7 +751,6 @@ async function handleForwardRequest(requestId, modifiedRequest) {
 }
 
 function handleDropRequest(requestId) {
-  // Find the pending request by the custom request ID
   let originalRequestId = null;
   let pending = null;
   
@@ -715,7 +763,6 @@ function handleDropRequest(requestId) {
   }
   
   if (pending && pending.resolve) {
-    // Update request status to show it was dropped
     const request = requests.get(requestId);
     if (request) {
       request.intercepted = false;
@@ -751,7 +798,34 @@ async function fetchResponseBody(request) {
 }
 
 function handleForwardResponse(requestId, modifiedResponse) {
-  // Find the pending response by the custom request ID
+  const headerIntercept = pendingResponseHeaderIntercepts.get(requestId);
+  if (headerIntercept) {
+    const { resolve, originalRequestId, request } = headerIntercept;
+    
+    if (modifiedResponse && modifiedResponse.headers) {
+      const modifiedHeadersArray = Object.entries(modifiedResponse.headers).map(([name, value]) => ({
+        name,
+        value
+      }));
+      
+      if (request) {
+        request.responseHeaders = modifiedResponse.headers;
+        request.statusLine = 'Headers Modified';
+        notifyDevTools({
+          type: 'updateRequest',
+          request: request
+        });
+      }
+      
+      resolve({ responseHeaders: modifiedHeadersArray });
+    } else {
+      resolve({});
+    }
+    
+    pendingResponseHeaderIntercepts.delete(requestId);
+    return;
+  }
+
   let originalRequestId = null;
   let pending = null;
   
@@ -765,7 +839,6 @@ function handleForwardResponse(requestId, modifiedResponse) {
   
   if (pending && pending.filter) {
     try {
-      // Update request status
       const request = requests.get(requestId);
       if (request) {
         request.responseIntercepted = false;
@@ -776,7 +849,6 @@ function handleForwardResponse(requestId, modifiedResponse) {
         });
       }
       
-      // Write modified response
       const modifiedData = new TextEncoder().encode(modifiedResponse.body || pending.responseBody);
       pending.filter.write(modifiedData);
       pending.filter.close();
@@ -791,7 +863,6 @@ function handleForwardResponse(requestId, modifiedResponse) {
 }
 
 function handleDropResponse(requestId) {
-  // Find the pending response by the custom request ID
   let originalRequestId = null;
   let pending = null;
   
@@ -804,7 +875,6 @@ function handleDropResponse(requestId) {
   }
   
   if (pending && pending.filter) {
-    // Update request status
     const request = requests.get(requestId);
     if (request) {
       request.responseIntercepted = false;
@@ -816,19 +886,15 @@ function handleDropResponse(requestId) {
       });
     }
     
-    // Close filter without writing any data (effectively dropping the response)
     pending.filter.close();
     pendingResponses.delete(originalRequestId);
   }
 }
 
 function handleDisableIntercept(currentRequestId, currentType) {
-  // Disable intercept globally
   interceptEnabled = false;
   
-  // Forward current request/response first
   if (currentType === 'request') {
-    // Find and forward current request
     let currentOriginalRequestId = null;
     let currentPending = null;
     
@@ -845,7 +911,6 @@ function handleDisableIntercept(currentRequestId, currentType) {
       pendingRequests.delete(currentOriginalRequestId);
     }
   } else if (currentType === 'response') {
-    // Find and forward current response
     let currentOriginalRequestId = null;
     let currentPending = null;
     
@@ -865,7 +930,6 @@ function handleDisableIntercept(currentRequestId, currentType) {
     }
   }
   
-  // Forward all remaining pending requests
   for (const [requestId, pendingData] of pendingRequests.entries()) {
     if (pendingData.resolve) {
       pendingData.resolve({});
@@ -873,7 +937,6 @@ function handleDisableIntercept(currentRequestId, currentType) {
   }
   pendingRequests.clear();
   
-  // Forward all remaining pending responses
   for (const [requestId, responseData] of pendingResponses.entries()) {
     if (responseData.filter) {
       const originalData = new TextEncoder().encode(responseData.responseBody);
@@ -883,10 +946,8 @@ function handleDisableIntercept(currentRequestId, currentType) {
   }
   pendingResponses.clear();
   
-  // Clear intercepted request IDs
   interceptedRequestIds.clear();
   
-  // Update icon and notify DevTools
   updateIcon();
   notifyDevTools({ 
     type: 'interceptStateChanged', 
