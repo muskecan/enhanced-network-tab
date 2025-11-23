@@ -610,7 +610,13 @@ document.getElementById('interceptResponses').addEventListener('change', (e) => 
     responseWarning.style.display = e.target.checked ? 'block' : 'none';
 });
 
-// Response intercept event listeners
+
+document.getElementById('useEarlyInterception').addEventListener('change', (e) => {
+    const warning = document.getElementById('earlyInterceptionWarning');
+    warning.style.display = e.target.checked ? 'block' : 'none';
+});
+
+
 forwardResponseBtn.addEventListener('click', () => {
     if (interceptedResponse) {
         const modifiedResponse = {
@@ -1761,6 +1767,11 @@ function updateInterceptSettingsUI() {
     document.getElementById('interceptResponses').checked = interceptSettings.interceptResponses;
     const responseWarning = document.getElementById('responseWarning');
     responseWarning.style.display = interceptSettings.interceptResponses ? 'block' : 'none';
+
+    
+    document.getElementById('useEarlyInterception').checked = interceptSettings.useEarlyInterception;
+    const earlyInterceptionWarning = document.getElementById('earlyInterceptionWarning');
+    earlyInterceptionWarning.style.display = interceptSettings.useEarlyInterception ? 'block' : 'none';
 }
 
 function saveInterceptSettings() {
@@ -1799,6 +1810,9 @@ function saveInterceptSettings() {
         
     // Get response interception setting
     const interceptResponses = document.getElementById('interceptResponses').checked;
+
+    // Get early interception setting
+    const useEarlyInterception = document.getElementById('useEarlyInterception').checked;
     
     // Validate regex patterns
     const invalidPatterns = [];
@@ -1822,7 +1836,8 @@ function saveInterceptSettings() {
         urlPatterns: includePatterns,
         excludePatterns: excludePatterns,
         excludeExtensions: excludeExtensions,
-        interceptResponses: interceptResponses
+        interceptResponses: interceptResponses,
+        useEarlyInterception: useEarlyInterception
     };
     
     port.postMessage({
@@ -1840,7 +1855,8 @@ function resetInterceptSettings() {
         urlPatterns: [],
         excludePatterns: [],
         excludeExtensions: ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'woff', 'woff2', 'ttf', 'eot'],
-        interceptResponses: false
+        interceptResponses: false,
+        useEarlyInterception: false
     };
     
     port.postMessage({
