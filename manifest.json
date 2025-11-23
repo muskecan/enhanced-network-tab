@@ -3,7 +3,11 @@
   "name": "Enhanced Network Tab",
   "version": "1.5",
   "description": "A lightweight security analysis tool for capturing and modifying HTTP/S requests",
-  
+  "browser_specific_settings": {
+  "gecko": {
+    "id": "@enhanced-network-tab"
+  }
+},
   "permissions": [
     "webRequest",
     "webRequestBlocking",
