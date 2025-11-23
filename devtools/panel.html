@@ -153,8 +153,8 @@
                     <span id="interceptSearchCount" class="search-count"></span>
                 </div>
             </div>
-            <div class="get-warning" style="margin-bottom: 15px;">
-                <p><strong>Note:</strong> Header modifications are applied natively. URL or Body modifications may require cancelling and resending the request, which means the original page might not receive the response (except for main frame navigations).</p>
+            <div class="get-warning" style="margin-bottom: 15px;" id="interceptWarning">
+                <p><strong>Note:</strong> Header modifications are applied natively. URL or Body modifications MAY require cancelling and resending the request, which means the original page might not receive the response (except for main frame navigations).</p>
             </div>
             <div class="intercept-editor">
                 <div class="editor-row">
@@ -328,6 +328,22 @@
                     </label>
                     <div class="response-warning" id="responseWarning" style="display: none;">
                         <p><strong>⚠️ Warning:</strong> Response interception will pause all responses for intercepted requests until you manually forward or drop them. This can significantly impact browsing experience.</p>
+                    </div>
+                </div>
+
+                <div class="setting-section">
+                    <h3>Early Interception</h3>
+                    <label class="method-checkbox">
+                        <input type="checkbox" id="useEarlyInterception">
+                        <span>Use onBeforeRequest (Early Interception)</span>
+                    </label>
+                    <div class="get-warning" id="earlyInterceptionWarning" style="display: none;">
+                        <p><strong>⚠️ Warning:</strong> This enables two-stage interception:</p>
+                        <ul style="margin: 8px 0 0 20px; padding-left: 0;">
+                            <li><strong>Stage 1 :</strong> Modify URL, Method, and Body. Headers are not available yet.</li>
+                            <li><strong>Stage 2 :</strong> Modify Headers, or change URL/Method/Body (will cancel and resend the request).</li>
+                        </ul>
+                        <p style="margin-top: 8px;">Without early interception, only Stage 2 is available.</p>
                     </div>
                 </div>
                 

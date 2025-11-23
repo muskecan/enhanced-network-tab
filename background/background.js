@@ -6,7 +6,8 @@ let interceptSettings = {
   urlPatterns: [],
   excludePatterns: [],
   excludeExtensions: ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'woff', 'woff2', 'ttf', 'eot'],
-  interceptResponses: false
+  interceptResponses: false,
+  useEarlyInterception: false
 };
 let requests = new Map();
 let activeTabId = null;
@@ -231,6 +232,26 @@ browser.webRequest.onBeforeRequest.addListener(
         request: requestData
       });
 
+      if (interceptSettings.useEarlyInterception) {
+        return new Promise((resolve) => {
+           const pendingData = {
+             ...requestData,
+             resolve: resolve,
+             originalRequestId: details.requestId,
+             stage: 'onBeforeRequest'
+           };
+           pendingRequests.set(details.requestId, pendingData);
+           
+           notifyDevTools({
+             type: 'interceptRequest',
+             request: {
+                 ...requestData,
+                 stage: 'onBeforeRequest'
+             }
+           });
+        });
+      }
+
       return {};
     }
     
@@ -280,6 +301,9 @@ browser.webRequest.onBeforeSendHeaders.addListener(
       
       if (request.shouldIntercept && !pendingRequests.has(details.requestId)) {
         return new Promise((resolve) => {
+          request.intercepted = true;
+          request.statusLine = 'Intercepted (Headers)';
+          
           const pendingData = {
             ...request,
             resolve: resolve,
@@ -290,7 +314,10 @@ browser.webRequest.onBeforeSendHeaders.addListener(
           
           notifyDevTools({
             type: 'interceptRequest',
-            request: request
+            request: {
+                ...request,
+                stage: 'onBeforeSendHeaders'
+            }
           });
         });
       }
@@ -660,6 +687,27 @@ async function handleForwardRequest(requestId, modifiedRequest) {
     
     const wasModified = urlChanged || methodChanged || headersChanged || bodyChanged;
     
+    if (pending.stage === 'onBeforeRequest') {
+        if (urlChanged) {
+             request.originalUrl = pending.url;
+             request.modifiedUrl = modifiedRequest.url;
+             request.wasModified = true;
+             request.statusLine = 'Redirecting (Early Intercept)';
+             request.intercepted = false;
+             
+             notifyDevTools({ type: 'updateRequest', request: request });
+             
+             pending.resolve({ redirectUrl: modifiedRequest.url });
+        } else {
+             request.intercepted = false;
+             request.statusLine = 'Forwarded (Early Intercept)';
+             notifyDevTools({ type: 'updateRequest', request: request });
+             pending.resolve({});
+        }
+        pendingRequests.delete(originalRequestId);
+        return;
+    }
+
     if (wasModified && request) {
       request.originalUrl = pending.url;
       request.originalMethod = pending.method;

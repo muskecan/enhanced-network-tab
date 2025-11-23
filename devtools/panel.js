@@ -1430,9 +1430,9 @@ function closeInterceptModal() {
     if (interceptQueue.length > 0) {
         processNextIntercept();
     } else {
-        interceptModal.classList.remove('show');
-        interceptedRequest = null;
-        interceptHeadersEdited = false;
+    interceptModal.classList.remove('show');
+    interceptedRequest = null;
+    interceptHeadersEdited = false;
     }
     updateQueueCounts();
 }
@@ -1864,8 +1864,8 @@ function closeResponseInterceptModal() {
     if (responseQueue.length > 0) {
         processNextResponseIntercept();
     } else {
-        responseInterceptModal.classList.remove('show');
-        interceptedResponse = null;
+    responseInterceptModal.classList.remove('show');
+    interceptedResponse = null;
     }
     updateQueueCounts();
 }
