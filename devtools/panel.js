@@ -1,6 +1,10 @@
 let port = browser.runtime.connect({ name: 'devtools-panel' });
+let inspectedTabId = browser.devtools.inspectedWindow.tabId;
 let requests = [];
 let selectedRequest = null;
+
+// Send the inspected tab ID to background script
+port.postMessage({ type: 'setInspectedTab', tabId: inspectedTabId });
 let currentRequestView = 'raw';
 let currentResponseView = 'raw';
 let currentModifiedView = 'raw';

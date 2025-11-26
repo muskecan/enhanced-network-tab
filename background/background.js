@@ -12,6 +12,7 @@ let interceptSettings = {
 let requests = new Map();
 let activeTabId = null;
 let devtoolsPorts = new Map();
+let inspectedTabs = new Set(); // Track tabs that have DevTools open
 let pendingRequests = new Map();
 let pendingResponses = new Map();
 let requestIdCounter = 0;
@@ -22,6 +23,19 @@ let pendingHeaderModifications = new Map();
 let pendingResponseHeaderIntercepts = new Map();
 
 const MAX_REQUESTS = 100;
+
+// Load saved settings from storage on startup
+browser.storage.local.get(['interceptSettings', 'captureEnabled']).then((result) => {
+  if (result.interceptSettings) {
+    interceptSettings = { ...interceptSettings, ...result.interceptSettings };
+  }
+  if (result.captureEnabled !== undefined) {
+    captureEnabled = result.captureEnabled;
+    updateIcon();
+  }
+}).catch((err) => {
+  console.error('Failed to load settings from storage:', err);
+});
 
 browser.tabs.onActivated.addListener((activeInfo) => {
   activeTabId = activeInfo.tabId;
@@ -179,7 +193,11 @@ function shouldInterceptRequest(details) {
 
 browser.webRequest.onBeforeRequest.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId || details.tabId === -1) {
+    // Check if capture is enabled and the request is from an inspected tab or active tab
+    const isInspectedTab = inspectedTabs.has(details.tabId);
+    const isActiveTab = details.tabId === activeTabId;
+    
+    if (!captureEnabled || details.tabId === -1 || (!isInspectedTab && !isActiveTab)) {
       return {};
     }
     
@@ -279,7 +297,8 @@ browser.webRequest.onBeforeRequest.addListener(
 
 browser.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId) return {};
+    const isTrackedTab = inspectedTabs.has(details.tabId) || details.tabId === activeTabId;
+    if (!captureEnabled || !isTrackedTab) return {};
     
     const requestId = requestIdMap.get(details.requestId);
     if (!requestId) return {};
@@ -331,7 +350,8 @@ browser.webRequest.onBeforeSendHeaders.addListener(
 
 browser.webRequest.onHeadersReceived.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId || details.tabId === -1) {
+    const isTrackedTab = inspectedTabs.has(details.tabId) || details.tabId === activeTabId;
+    if (!captureEnabled || details.tabId === -1 || !isTrackedTab) {
       return {};
     }
     
@@ -505,7 +525,8 @@ browser.webRequest.onHeadersReceived.addListener(
 
 browser.webRequest.onResponseStarted.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId) return;
+    const isTrackedTab = inspectedTabs.has(details.tabId) || details.tabId === activeTabId;
+    if (!captureEnabled || !isTrackedTab) return;
     
     const requestId = requestIdMap.get(details.requestId);
     if (!requestId) return;
@@ -533,7 +554,8 @@ browser.webRequest.onResponseStarted.addListener(
 
 browser.webRequest.onCompleted.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId) return;
+    const isTrackedTab = inspectedTabs.has(details.tabId) || details.tabId === activeTabId;
+    if (!captureEnabled || !isTrackedTab) return;
     
     const requestId = requestIdMap.get(details.requestId);
     if (!requestId) return;
@@ -553,7 +575,8 @@ browser.webRequest.onCompleted.addListener(
 
 browser.webRequest.onErrorOccurred.addListener(
   (details) => {
-    if (!captureEnabled || details.tabId !== activeTabId) return;
+    const isTrackedTab = inspectedTabs.has(details.tabId) || details.tabId === activeTabId;
+    if (!captureEnabled || !isTrackedTab) return;
     
     const requestId = requestIdMap.get(details.requestId);
     if (!requestId) return;
@@ -592,12 +615,24 @@ browser.runtime.onConnect.addListener((port) => {
     
     port.onDisconnect.addListener(() => {
       devtoolsPorts.delete(tabId);
+      // Clean up inspected tab when DevTools closes
+      if (port.inspectedTabId) {
+        inspectedTabs.delete(port.inspectedTabId);
+      }
     });
   }
 });
 
 function handleDevToolsMessage(msg, port) {
   switch (msg.type) {
+    case 'setInspectedTab':
+      if (msg.tabId) {
+        inspectedTabs.add(msg.tabId);
+        // Store the tab ID with the port for cleanup
+        port.inspectedTabId = msg.tabId;
+      }
+      break;
+      
     case 'toggleCapture':
       captureEnabled = msg.enabled;
       if (!captureEnabled && interceptEnabled) {
@@ -644,6 +679,10 @@ function handleDevToolsMessage(msg, port) {
       
     case 'updateInterceptSettings':
       interceptSettings = { ...interceptSettings, ...msg.settings };
+      // Save to storage for persistence
+      browser.storage.local.set({ interceptSettings: interceptSettings }).catch((err) => {
+        console.error('Failed to save intercept settings:', err);
+      });
       notifyDevTools({ type: 'interceptSettingsChanged', settings: interceptSettings });
       break;
       
