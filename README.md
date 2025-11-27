@@ -9,12 +9,16 @@ A lightweight Firefox extension for capturing, analyzing, and modifying HTTP/HTT
 - **Request Capture**: Monitor all HTTP/HTTPS traffic from the active tab
 - **Request Interception**: Intercept and modify requests before they are sent
 - **Response Interception**: Intercept and modify responses before they reach the browser
+- **Match & Replace**: Create rules to automatically modify request URL, headers, or body content
 - **Request Repeater**: Resend requests with custom modifications for testing
 - **Advanced Filtering**: Filter requests by method, URL patterns, and file types
+- **Responsive UI**: Optimized layout that automatically adapts to vertical split views or narrower windows
 - **Dark/Light Theme**: Automatic or manual theme switching
-- **Export as cURL**: Copy any request as a cURL command
+- **Export as cURL**: Copy any request (original or modified) as a cURL command
+- **Decoder**: Built-in tool for encoding/decoding URL, Base64, Hex, HTML, and JWT
 - **Column Sorting**: Sort and resize request table columns
 - **Search**: Search through request/response headers and bodies
+- **Highlighting Rules**: Color-code requests based on custom URL patterns
 
 ## Screenshots
 
