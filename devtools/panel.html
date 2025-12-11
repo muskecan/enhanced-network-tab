@@ -22,6 +22,10 @@
                 <button id="interceptSettingsBtn" class="btn">Intercept Settings</button>
                 <button id="clearBtn" class="btn">Clear</button>
                 <button id="decoderBtn" class="btn">Decoder</button>
+                <button id="securityBtn" class="btn security-btn">
+                    <span>Automated Scanner</span>
+                    <span id="securityBadge" class="security-badge" style="display: none;">0</span>
+                </button>
                 <button id="filterBtn" class="btn">Filters ▼</button>
                 <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle theme">
                     <span class="theme-icon">🌙</span>
@@ -94,6 +98,10 @@
                     <button class="tab-btn active" data-tab="request">Request</button>
                     <button class="tab-btn" data-tab="modified" style="display:none;">Modified Request</button>
                     <button class="tab-btn" data-tab="response">Response</button>
+                    <button class="tab-btn" data-tab="security" id="securityTabBtn" style="display:none;">
+                        Security
+                        <span id="securityTabBadge" class="security-tab-badge" style="display: none;">0</span>
+                    </button>
                 </div>
                 
                 <div class="tab-content" id="requestTab">
@@ -144,6 +152,20 @@
                     </div>
                     <div class="content-area">
                         <pre id="responseContent"></pre>
+                    </div>
+                </div>
+                
+                <div class="tab-content" id="securityTab" style="display:none;">
+                    <div class="view-toggle">
+                        <span class="security-tab-title">Security Findings for Selected Request</span>
+                        <button class="btn" id="exportSecurityFindingsBtn">Export JSON</button>
+                    </div>
+                    <div class="content-area security-content-area">
+                        <div id="securityTabContent" class="security-findings-container">
+                            <div class="security-no-findings">
+                                <p>No security findings for this request.</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -552,7 +574,73 @@
             </div>
         </div>
     </div>
+    
+    <div id="securityModal" class="modal">
+        <div class="modal-content security-modal">
+            <div class="modal-header">
+                <h2>
+                    Security Findings [BETA]
+                    <span id="securityModalBadge" class="security-modal-badge">0</span>
+                </h2>
+                <button class="close-btn" id="closeSecurityBtn">&times;</button>
+            </div>
+            <div class="security-modal-container">
+                <div class="security-summary" id="securitySummary">
+                    <div class="summary-item critical">
+                        <span class="summary-count" id="summaryApiKeys">0</span>
+                        <span class="summary-label">API Keys</span>
+                    </div>
+                    <div class="summary-item high">
+                        <span class="summary-count" id="summaryCredentials">0</span>
+                        <span class="summary-label">Credentials</span>
+                    </div>
+                    <div class="summary-item low">
+                        <span class="summary-count" id="summaryEmails">0</span>
+                        <span class="summary-label">Emails</span>
+                    </div>
+                    <div class="summary-item info">
+                        <span class="summary-count" id="summaryEndpoints">0</span>
+                        <span class="summary-label">Endpoints</span>
+                    </div>
+                    <div class="summary-item info">
+                        <span class="summary-count" id="summaryPaths">0</span>
+                        <span class="summary-label">Paths</span>
+                    </div>
+                </div>
+                
+                <div class="security-filter-bar">
+                    <input type="text" id="securitySearchInput" placeholder="Search findings..." class="security-search-input">
+                    <select id="securityCategoryFilter" class="security-category-filter">
+                        <option value="all">All Categories</option>
+                        <option value="apiKeys">API Keys</option>
+                        <option value="credentials">Credentials</option>
+                        <option value="emails">Emails</option>
+                        <option value="apiEndpoints">API Endpoints</option>
+                        <option value="parameters">Parameters</option>
+                        <option value="paths">Paths</option>
+                    </select>
+                    <select id="securitySeverityFilter" class="security-severity-filter">
+                        <option value="all">All Severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                        <option value="info">Info</option>
+                    </select>
+                    <button class="btn" id="clearSecurityFindingsBtn">Clear All</button>
+                    <button class="btn" id="exportAllSecurityBtn">Export JSON</button>
+                </div>
+                
+                <div class="security-findings-list" id="securityFindingsList">
+                    <div class="security-no-findings">
+                        <p>No security findings yet. Start browsing with capture enabled to scan response bodies.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
+    <script src="security-scanner.js"></script>
     <script src="panel.js"></script>
 </body>
 </html>

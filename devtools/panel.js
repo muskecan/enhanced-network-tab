@@ -29,6 +29,11 @@ let requestCounter = 0;
 let highlightRules = [];
 let matchReplaceRules = [];
 
+// Security Scanner State
+let securityFindings = []; // All findings from all requests
+let unseenFindingsCount = 0; // Number of unseen findings (for badge)
+let requestFindings = new Map(); // Map of requestId -> findings
+
 // Theme Management
 let currentTheme = 'auto'; // 'auto', 'light', or 'dark'
 let browserPrefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -351,6 +356,22 @@ const saveMatchReplaceRulesBtn = document.getElementById('saveMatchReplaceRulesB
 const clearMatchReplaceRulesBtn = document.getElementById('clearMatchReplaceRulesBtn');
 const matchReplaceRulesList = document.getElementById('matchReplaceRulesList');
 
+// Security Scanner Elements
+const securityBtn = document.getElementById('securityBtn');
+const securityBadge = document.getElementById('securityBadge');
+const securityModal = document.getElementById('securityModal');
+const closeSecurityBtn = document.getElementById('closeSecurityBtn');
+const securityFindingsList = document.getElementById('securityFindingsList');
+const securitySearchInput = document.getElementById('securitySearchInput');
+const securityCategoryFilter = document.getElementById('securityCategoryFilter');
+const securitySeverityFilter = document.getElementById('securitySeverityFilter');
+const clearSecurityFindingsBtn = document.getElementById('clearSecurityFindingsBtn');
+const exportAllSecurityBtn = document.getElementById('exportAllSecurityBtn');
+const securityTabBtn = document.getElementById('securityTabBtn');
+const securityTabBadge = document.getElementById('securityTabBadge');
+const securityTabContent = document.getElementById('securityTabContent');
+const exportSecurityFindingsBtn = document.getElementById('exportSecurityFindingsBtn');
+
 let currentRepeaterTab = 'headers';
 let lastRepeaterResponse = null;
 
@@ -600,6 +621,424 @@ function saveHighlightRules() {
     localStorage.setItem('highlightRules', JSON.stringify(highlightRules));
 }
 
+// ==========================================
+// SECURITY SCANNER EVENT LISTENERS
+// ==========================================
+
+// Open Security Modal
+securityBtn.addEventListener('click', () => {
+    // Mark all findings as seen
+    unseenFindingsCount = 0;
+    updateSecurityBadge();
+    
+    // Render and show modal
+    renderSecurityModal();
+    securityModal.classList.add('show');
+});
+
+// Close Security Modal
+closeSecurityBtn.addEventListener('click', () => {
+    securityModal.classList.remove('show');
+});
+
+// Security Search
+securitySearchInput.addEventListener('input', () => {
+    renderSecurityFindingsList();
+});
+
+// Security Category Filter
+securityCategoryFilter.addEventListener('change', () => {
+    renderSecurityFindingsList();
+});
+
+// Security Severity Filter
+securitySeverityFilter.addEventListener('change', () => {
+    renderSecurityFindingsList();
+});
+
+// Clear All Security Findings
+clearSecurityFindingsBtn.addEventListener('click', () => {
+    if (clearSecurityFindingsBtn.textContent === 'Confirm?') {
+        securityFindings = [];
+        requestFindings.clear();
+        unseenFindingsCount = 0;
+        updateSecurityBadge();
+        renderSecurityModal();
+        renderRequestList(); // Update request list to remove security indicators
+        clearSecurityFindingsBtn.textContent = 'Clear All';
+        clearSecurityFindingsBtn.classList.remove('confirm-state');
+    } else {
+        clearSecurityFindingsBtn.textContent = 'Confirm?';
+        clearSecurityFindingsBtn.classList.add('confirm-state');
+        
+        setTimeout(() => {
+            if (clearSecurityFindingsBtn.textContent === 'Confirm?') {
+                clearSecurityFindingsBtn.textContent = 'Clear All';
+                clearSecurityFindingsBtn.classList.remove('confirm-state');
+            }
+        }, 3000);
+    }
+});
+
+// Export All Security Findings
+exportAllSecurityBtn.addEventListener('click', () => {
+    exportSecurityFindings(securityFindings, 'all-security-findings.json');
+});
+
+// Export Security Findings for Selected Request
+exportSecurityFindingsBtn.addEventListener('click', () => {
+    if (selectedRequest && requestFindings.has(selectedRequest.id)) {
+        const findings = requestFindings.get(selectedRequest.id);
+        exportSecurityFindings([findings], `security-findings-${selectedRequest.id}.json`);
+    }
+});
+
+// ==========================================
+// SECURITY SCANNER FUNCTIONS
+// ==========================================
+
+/**
+ * Scan a request's response body for security issues
+ */
+function scanRequestForSecurity(request) {
+    if (!request.responseBody || !SecurityScanner) {
+        return null;
+    }
+    
+    // Check if content type is scannable
+    const contentType = Object.entries(request.responseHeaders || {})
+        .find(([key]) => key.toLowerCase() === 'content-type')?.[1] || '';
+    
+    if (!SecurityScanner.isScannable(contentType)) {
+        return null;
+    }
+    
+    // Scan the content
+    const results = SecurityScanner.scan(request.responseBody, request.url);
+    
+    if (results) {
+        results.requestId = request.id;
+        results.requestNumber = request.requestNumber;
+    }
+    
+    return results;
+}
+
+/**
+ * Process security scan results for a request
+ */
+function processSecurityResults(request, results) {
+    if (!results) return;
+    
+    // Store findings
+    requestFindings.set(request.id, results);
+    securityFindings.push(results);
+    
+    // Count significant findings for the badge
+    const significantCount = 
+        results.apiKeys.length +
+        results.credentials.length;
+    
+    if (significantCount > 0) {
+        unseenFindingsCount += significantCount;
+        updateSecurityBadge();
+    }
+    
+    // Mark request as having findings
+    request.hasSecurityFindings = true;
+    request.securityFindingsCount = results.totalFindings;
+}
+
+/**
+ * Update the security badge count
+ */
+function updateSecurityBadge() {
+    if (unseenFindingsCount > 0) {
+        securityBadge.textContent = unseenFindingsCount > 99 ? '99+' : unseenFindingsCount;
+        securityBadge.style.display = 'flex';
+    } else {
+        securityBadge.style.display = 'none';
+    }
+}
+
+/**
+ * Render the security modal with all findings
+ */
+function renderSecurityModal() {
+    // Update summary counts
+    let apiKeyCount = 0, credentialCount = 0, emailCount = 0, endpointCount = 0, pathCount = 0;
+    
+    securityFindings.forEach(finding => {
+        // Handle findings from both panel scanner and background scanner
+        // Background scanner only provides apiKeys and credentials
+        apiKeyCount += (finding.apiKeys || []).length;
+        credentialCount += (finding.credentials || []).length;
+        emailCount += (finding.emails || []).length;
+        endpointCount += (finding.apiEndpoints || []).length;
+        pathCount += (finding.paths || []).length;
+    });
+    
+    document.getElementById('summaryApiKeys').textContent = apiKeyCount;
+    document.getElementById('summaryCredentials').textContent = credentialCount;
+    document.getElementById('summaryEmails').textContent = emailCount;
+    document.getElementById('summaryEndpoints').textContent = endpointCount;
+    document.getElementById('summaryPaths').textContent = pathCount;
+    
+    // Update modal badge
+    const totalSignificant = apiKeyCount + credentialCount;
+    document.getElementById('securityModalBadge').textContent = totalSignificant;
+    
+    // Render the findings list
+    renderSecurityFindingsList();
+}
+
+/**
+ * Render the security findings list with filters
+ */
+function renderSecurityFindingsList() {
+    const searchTerm = securitySearchInput.value.toLowerCase();
+    const categoryFilter = securityCategoryFilter.value;
+    const severityFilter = securitySeverityFilter.value;
+    
+    securityFindingsList.innerHTML = '';
+    
+    if (securityFindings.length === 0) {
+        securityFindingsList.innerHTML = `
+            <div class="security-no-findings">
+                <p>No security findings yet. Start browsing with capture enabled to scan response bodies.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Group findings by URL
+    const groupedFindings = new Map();
+    
+    securityFindings.forEach(finding => {
+        const url = finding.url;
+        if (!groupedFindings.has(url)) {
+            groupedFindings.set(url, {
+                url: url,
+                requestId: finding.requestId,
+                requestNumber: finding.requestNumber,
+                items: []
+            });
+        }
+        
+        const group = groupedFindings.get(url);
+        
+        // Add items based on category filter
+        const categories = categoryFilter === 'all' 
+            ? ['apiKeys', 'credentials', 'emails', 'apiEndpoints', 'parameters', 'paths']
+            : [categoryFilter];
+        
+        categories.forEach(cat => {
+            if (finding[cat]) {
+                finding[cat].forEach(item => {
+                    // Apply severity filter
+                    if (severityFilter !== 'all' && item.severity !== severityFilter) {
+                        return;
+                    }
+                    
+                    // Apply search filter
+                    if (searchTerm) {
+                        const searchable = `${item.type} ${item.match} ${item.context || ''}`.toLowerCase();
+                        if (!searchable.includes(searchTerm)) {
+                            return;
+                        }
+                    }
+                    
+                    group.items.push({
+                        ...item,
+                        requestId: finding.requestId
+                    });
+                });
+            }
+        });
+    });
+    
+    // Render grouped findings
+    let hasItems = false;
+    
+    groupedFindings.forEach((group, url) => {
+        if (group.items.length === 0) return;
+        hasItems = true;
+        
+        const groupEl = document.createElement('div');
+        groupEl.className = 'finding-group';
+        
+        // Group header
+        const headerEl = document.createElement('div');
+        headerEl.className = 'finding-group-header';
+        headerEl.innerHTML = `
+            <span class="finding-group-url" title="${escapeHTML(url)}">${escapeHTML(url)}</span>
+            <span class="finding-group-count">${group.items.length}</span>
+        `;
+        
+        // Group items container
+        const itemsEl = document.createElement('div');
+        itemsEl.className = 'finding-group-items';
+        
+        group.items.forEach((item, index) => {
+            const itemEl = createFindingItemElement(item, `${group.requestId}-${index}`);
+            itemsEl.appendChild(itemEl);
+        });
+        
+        groupEl.appendChild(headerEl);
+        groupEl.appendChild(itemsEl);
+        securityFindingsList.appendChild(groupEl);
+    });
+    
+    if (!hasItems) {
+        securityFindingsList.innerHTML = `
+            <div class="security-no-findings">
+                <p>No findings match the current filters.</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Create a finding item element
+ */
+function createFindingItemElement(item, id) {
+    const el = document.createElement('div');
+    el.className = 'finding-item';
+    el.id = `finding-${id}`;
+    
+    const severity = item.severity || 'info';
+    
+    // Create header
+    const header = document.createElement('div');
+    header.className = 'finding-header';
+    header.innerHTML = `
+        <span class="finding-severity ${severity}">${severity}</span>
+        <span class="finding-type">${escapeHTML(item.type)}</span>
+        <span class="finding-toggle">▼</span>
+    `;
+    
+    // Create body
+    const body = document.createElement('div');
+    body.className = 'finding-body';
+    body.id = `finding-body-${id}`;
+    body.innerHTML = `
+        <div class="finding-match">${escapeHTML(item.match)}</div>
+        ${item.context ? `<div class="finding-context">${escapeHTML(item.context)}</div>` : ''}
+        <div class="finding-meta">
+            ${item.line ? `<span>Line: ${item.line}</span>` : ''}
+            ${item.extractedValue && item.extractedValue !== item.match ? `<span>Value: ${escapeHTML(item.extractedValue.substring(0, 50))}${item.extractedValue.length > 50 ? '...' : ''}</span>` : ''}
+        </div>
+    `;
+    
+    // Add click event listener to header
+    header.addEventListener('click', () => {
+        const toggle = header.querySelector('.finding-toggle');
+        if (body.classList.contains('expanded')) {
+            body.classList.remove('expanded');
+            toggle.textContent = '▼';
+        } else {
+            body.classList.add('expanded');
+            toggle.textContent = '▲';
+        }
+    });
+    
+    el.appendChild(header);
+    el.appendChild(body);
+    
+    return el;
+}
+
+
+/**
+ * Export security findings to JSON file
+ */
+function exportSecurityFindings(findings, filename) {
+    const data = JSON.stringify(findings, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/**
+ * Display security findings for a specific request in the Security tab
+ */
+function displayRequestSecurityFindings(request) {
+    const securityTabContent = document.getElementById('securityTabContent');
+    
+    if (!request || !requestFindings.has(request.id)) {
+        securityTabContent.innerHTML = `
+            <div class="security-no-findings">
+                <p>No security findings for this request.</p>
+            </div>
+        `;
+        securityTabBtn.style.display = 'none';
+        return;
+    }
+    
+    const findings = requestFindings.get(request.id);
+    
+    // Show the security tab
+    securityTabBtn.style.display = 'inline-flex';
+    
+    // Update tab badge
+    const totalCount = findings.apiKeys.length + findings.credentials.length + 
+                       findings.emails.length +
+                       findings.apiEndpoints.length + findings.paths.length;
+    
+    if (totalCount > 0) {
+        securityTabBadge.textContent = totalCount;
+        securityTabBadge.style.display = 'inline-flex';
+    } else {
+        securityTabBadge.style.display = 'none';
+    }
+    
+    // Render findings
+    securityTabContent.innerHTML = '';
+    
+    const categories = [
+        { key: 'apiKeys', label: 'API Keys', severity: 'critical' },
+        { key: 'credentials', label: 'Credentials', severity: 'critical' },
+        { key: 'emails', label: 'Emails', severity: 'info' },
+        { key: 'apiEndpoints', label: 'API Endpoints', severity: 'info' },
+        { key: 'parameters', label: 'Parameters', severity: 'info' },
+        { key: 'paths', label: 'Paths', severity: 'info' }
+    ];
+    
+    categories.forEach(cat => {
+        const items = findings[cat.key];
+        if (!items || items.length === 0) return;
+        
+        const section = document.createElement('div');
+        section.className = 'finding-group';
+        
+        const header = document.createElement('div');
+        header.className = 'finding-group-header';
+        header.innerHTML = `
+            <span class="finding-group-url">${cat.label}</span>
+            <span class="finding-group-count">${items.length}</span>
+        `;
+        
+        const itemsContainer = document.createElement('div');
+        itemsContainer.className = 'finding-group-items';
+        
+        items.forEach((item, index) => {
+            const itemEl = createFindingItemElement(item, `tab-${cat.key}-${index}`);
+            itemsContainer.appendChild(itemEl);
+        });
+        
+        section.appendChild(header);
+        section.appendChild(itemsContainer);
+        securityTabContent.appendChild(section);
+    });
+}
+
 captureToggle.addEventListener('change', () => {
     // If capture is turned off, also turn off intercept
     if (!captureToggle.checked && interceptToggle.checked) {
@@ -704,6 +1143,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         document.getElementById('requestTab').style.display = tab === 'request' ? 'flex' : 'none';
         document.getElementById('modifiedTab').style.display = tab === 'modified' ? 'flex' : 'none';
         document.getElementById('responseTab').style.display = tab === 'response' ? 'flex' : 'none';
+        document.getElementById('securityTab').style.display = tab === 'security' ? 'flex' : 'none';
         
         if (selectedRequest) {
             displayRequestDetails(selectedRequest);
@@ -989,6 +1429,17 @@ port.onMessage.addListener((msg) => {
                     requestCounter = Math.max(requestCounter, req.requestNumber);
                 }
             });
+            // Load security findings from background (captured while DevTools was closed)
+            if (msg.securityFindings && msg.securityFindings.length > 0) {
+                msg.securityFindings.forEach(finding => {
+                    if (!securityFindings.some(f => f.url === finding.url && f.timestamp === finding.timestamp)) {
+                        securityFindings.push(finding);
+                    }
+                });
+                unseenFindingsCount = msg.securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
+                updateSecurityBadge();
+                renderSecurityFindingsList();
+            }
             renderRequestList();
             break;
             
@@ -1019,7 +1470,23 @@ port.onMessage.addListener((msg) => {
             if (index !== -1) {
                 // Preserve the request number when updating
                 msg.request.requestNumber = requests[index].requestNumber;
+                
+                // Preserve security findings if already scanned
+                if (requests[index].hasSecurityFindings) {
+                    msg.request.hasSecurityFindings = requests[index].hasSecurityFindings;
+                    msg.request.securityFindingsCount = requests[index].securityFindingsCount;
+                }
+                
                 requests[index] = msg.request;
+                
+                // Scan response body for security issues if not already scanned
+                if (msg.request.responseBody && !requestFindings.has(msg.request.id) && captureToggle.checked) {
+                    const scanResults = scanRequestForSecurity(msg.request);
+                    if (scanResults) {
+                        processSecurityResults(msg.request, scanResults);
+                    }
+                }
+                
                 renderRequestList();
                 if (selectedRequest && selectedRequest.id === msg.request.id) {
                     selectedRequest = msg.request;
@@ -1057,8 +1524,45 @@ port.onMessage.addListener((msg) => {
         case 'requestsCleared':
             requests = [];
             requestCounter = 0;
+            // Also clear security findings
+            securityFindings = [];
+            requestFindings.clear();
+            unseenFindingsCount = 0;
+            updateSecurityBadge();
             renderRequestList();
             clearRequestDetails();
+            break;
+            
+        case 'securityFinding':
+            // New security finding from background scanner
+            if (msg.finding && !securityFindings.some(f => f.url === msg.finding.url && f.timestamp === msg.finding.timestamp)) {
+                securityFindings.push(msg.finding);
+                unseenFindingsCount += msg.finding.totalFindings;
+                updateSecurityBadge();
+                renderSecurityFindingsList();
+            }
+            break;
+            
+        case 'securityFindingsCleared':
+            securityFindings = [];
+            requestFindings.clear();
+            unseenFindingsCount = 0;
+            updateSecurityBadge();
+            renderSecurityFindingsList();
+            break;
+            
+        case 'securityFindingsResponse':
+            // Response to getSecurityFindings request
+            if (msg.findings && msg.findings.length > 0) {
+                msg.findings.forEach(finding => {
+                    if (!securityFindings.some(f => f.url === finding.url && f.timestamp === finding.timestamp)) {
+                        securityFindings.push(finding);
+                    }
+                });
+                unseenFindingsCount = msg.findings.reduce((acc, f) => acc + f.totalFindings, 0);
+                updateSecurityBadge();
+                renderSecurityFindingsList();
+            }
             break;
             
         case 'repeaterResponse':
@@ -1284,6 +1788,11 @@ function renderRequestList() {
             row.classList.add('modified-request');
         }
         
+        // Mark requests with security findings
+        if (req.hasSecurityFindings || requestFindings.has(req.id)) {
+            row.classList.add('request-has-findings');
+        }
+        
         const numberCell = document.createElement('td');
         numberCell.textContent = req.requestNumber || '';
         numberCell.className = 'request-number';
@@ -1396,8 +1905,12 @@ function displayRequestDetails(request) {
             document.getElementById('requestTab').style.display = 'flex';
             document.getElementById('modifiedTab').style.display = 'none';
             document.getElementById('responseTab').style.display = 'none';
+            document.getElementById('securityTab').style.display = 'none';
         }
     }
+    
+    // Show/hide security tab based on whether request has security findings
+    displayRequestSecurityFindings(request);
     
     // Show info note if auto-modified
     const existingNote = document.querySelector('.auto-modified-note');
@@ -1442,6 +1955,8 @@ function displayRequestDetails(request) {
         document.querySelectorAll('#modifiedTab .view-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.view === currentModifiedView);
         });
+    } else if (currentTab === 'security') {
+        // Security tab content is already rendered by displayRequestSecurityFindings
     } else {
         const result = formatResponseContent(request, currentResponseView);
         
@@ -1787,6 +2302,18 @@ function clearRequestDetails() {
     const modifiedTabBtn = document.querySelector('.tab-btn[data-tab="modified"]');
     if (modifiedTabBtn) {
         modifiedTabBtn.style.display = 'none';
+    }
+    
+    // Hide and clear security tab when no request is selected
+    if (securityTabBtn) {
+        securityTabBtn.style.display = 'none';
+    }
+    if (securityTabContent) {
+        securityTabContent.innerHTML = `
+            <div class="security-no-findings">
+                <p>No security findings for this request.</p>
+            </div>
+        `;
     }
 }
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Enhanced Network Tab",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "A lightweight security analysis tool for capturing and modifying HTTP/S requests",
   
   "permissions": [

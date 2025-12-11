@@ -10,6 +10,7 @@ A lightweight Firefox extension for capturing, analyzing, and modifying HTTP/HTT
 - **Request Interception**: Intercept and modify requests before they are sent
 - **Response Interception**: Intercept and modify responses before they reach the browser
 - **Match & Replace**: Create rules to automatically modify request URL, headers, or body content
+- **Security Scanner**: Automatically scan response bodies for sensitive data and security issues
 - **Request Repeater**: Resend requests with custom modifications for testing
 - **Advanced Filtering**: Filter requests by method, URL patterns, and file types
 - **Responsive UI**: Optimized layout that automatically adapts to vertical split views or narrower windows
@@ -19,6 +20,66 @@ A lightweight Firefox extension for capturing, analyzing, and modifying HTTP/HTT
 - **Column Sorting**: Sort and resize request table columns
 - **Search**: Search through request/response headers and bodies
 - **Highlighting Rules**: Color-code requests based on custom URL patterns
+
+### Security Scanner (Beta)
+
+The built-in security scanner automatically analyzes response bodies while you browse, detecting potential security issues. **This feature is currently in beta.**
+
+**Supported API Key Patterns (100+ patterns):**
+
+| Service | Detected Token Types |
+|---------|---------------------|
+| **AWS** | Access Key ID, Secret Key |
+| **Google Cloud** | API Key, OAuth Access Token, Refresh Token, Auth Code |
+| **GitHub** | Classic PAT, Fine-Grained PAT, OAuth, User-to-Server, Server-to-Server, Refresh Token |
+| **OpenAI** | User API Key, Project Key, Service Key (with T3BlbkFJ marker) |
+| **Stripe** | Live/Test Secret Key, Restricted Key, Publishable Key |
+| **Slack** | Bot Token, User Token, Config Token, Refresh Token, Webhook |
+| **Twitter** | Access Token |
+| **Facebook** | Access Token, OAuth 2.0 |
+| **Instagram** | OAuth 2.0 Token |
+| **Square** | Access Token, OAuth Secret |
+| **PayPal/Braintree** | Access Token |
+| **Twilio** | API Key, Access Token |
+| **SendGrid** | API Key |
+| **Mailgun** | API Key |
+| **MailChimp** | Access Token |
+| **Heroku** | API Key |
+| **WakaTime** | API Key |
+| **Amazon MWS** | Auth Token |
+| **Foursquare** | Secret Key |
+| **Picatic** | API Key |
+| **GitLab** | Personal Access Token |
+| **Anthropic** | API Key |
+| **HuggingFace** | API Token |
+| **Replicate** | API Token |
+| **DigitalOcean** | Personal Access Token |
+| **Notion** | Integration Token |
+| **Azure** | Storage Connection String |
+| **Firebase** | Cloud Messaging Token |
+| **Dropbox** | Access Token |
+| **Cloudflare** | API Token |
+| **Terraform** | Token |
+
+**Other Detection Categories:**
+- **Credentials**: Hardcoded passwords, usernames, database credentials, connection strings
+- **JWT Tokens**: JSON Web Tokens with validation
+- **Private Keys**: RSA, DSA, EC, OpenSSH, PGP private keys
+- **Basic Auth**: Credentials embedded in URLs
+- **Generic Secrets**: API keys, access tokens, client secrets in variable assignments
+- **Emails**: Email addresses found in JavaScript code
+- **API Endpoints**: Hardcoded fetch/axios/XHR URLs and API base configurations
+- **Sensitive Files**: Environment files (.env), SSH keys, Git exposure, backup files
+
+**Features:**
+- Background scanning even when DevTools is closed (with Capture enabled)
+- Real-time scanning with badge notification on extension icon
+- iOS-style notification badge showing unseen findings count
+- Filterable by category and severity (Critical, High, Medium, Low, Info)
+- Per-request Security tab showing findings for selected request
+- Export findings as JSON for further analysis
+- False positive filtering for placeholder values
+- JSON and config file format support
 
 ## Screenshots
 
@@ -53,6 +114,8 @@ Click the link above or search for "Enhanced Network Tab" in Firefox Add-ons.
 5. Click on any request to view details
 6. Use "Send to Repeater" to resend modified requests
 7. Configure intercept rules via "Intercept Settings"
+8. Click "Automated Scanner" button to view security findings (badge shows unseen count)
+
 
 ## Privacy & Security
 
@@ -79,15 +142,16 @@ The extension is built using vanilla JavaScript with the Firefox WebExtensions A
 
 ```
 ├── background/
-│   └── background.js       # Background service worker
+│   └── background.js          # Background service worker
 ├── devtools/
-│   ├── devtools.html       # DevTools panel entry point
-│   ├── devtools.js         # DevTools panel initialization
-│   ├── panel.html          # Main UI
-│   ├── panel.js            # UI logic and event handlers
-│   └── panel.css           # Styles with theme support
-├── icons/                  # Extension icons
-└── manifest.json           # Extension manifest
+│   ├── devtools.html          # DevTools panel entry point
+│   ├── devtools.js            # DevTools panel initialization
+│   ├── panel.html             # Main UI
+│   ├── panel.js               # UI logic and event handlers
+│   ├── panel.css              # Styles with theme support
+│   └── security-scanner.js    # Security scanning module
+├── icons/                     # Extension icons
+└── manifest.json              # Extension manifest
 ```
 
 ## License

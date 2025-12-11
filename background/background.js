@@ -31,10 +31,220 @@ let pendingBodyModifications = new Map();
 let pendingRepeaterRequests = new Map(); // repeaterId -> { headers, url, method, body }
 let repeaterIdCounter = 0;
 
-const MAX_REQUESTS = 100;
+const MAX_REQUESTS = 1000;
+
+// ==========================================
+// SECURITY SCANNER - Background Implementation
+// ==========================================
+let securityFindings = [];
+const MAX_FINDINGS = 1000;
+
+const SecurityScanner = {
+    // API Key patterns - comprehensive patterns for background scanning
+    apiKeyPatterns: [
+        // AWS
+        { pattern: /AKIA[0-9A-Z]{16}/g, type: 'AWS Access Key ID', severity: 'critical', strict: true },
+        { pattern: /["']?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?secret|aws[_-]?secret[_-]?key)["']?\s*[:=]\s*["']([a-zA-Z0-9/+=]{40})["']/gi, type: 'AWS Secret Key', severity: 'critical', strict: false },
+        
+        // Google
+        { pattern: /AIza[0-9A-Za-z\-_]{35}/g, type: 'Google API Key', severity: 'critical', strict: true },
+        { pattern: /ya29\.[0-9A-Za-z\-_]+/g, type: 'Google OAuth Access Token', severity: 'critical', strict: true },
+        { pattern: /1\/[0-9A-Za-z\-]{43}/g, type: 'Google OAuth Refresh Token', severity: 'critical', strict: true },
+        
+        // GitHub
+        { pattern: /ghp_[a-zA-Z0-9]{36}/g, type: 'GitHub Personal Access Token', severity: 'critical', strict: true },
+        { pattern: /github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}/g, type: 'GitHub Fine-Grained Token', severity: 'critical', strict: true },
+        { pattern: /gho_[a-zA-Z0-9]{36}/g, type: 'GitHub OAuth Token', severity: 'critical', strict: true },
+        { pattern: /ghu_[a-zA-Z0-9]{36}/g, type: 'GitHub User-to-Server Token', severity: 'critical', strict: true },
+        { pattern: /ghs_[a-zA-Z0-9]{36}/g, type: 'GitHub Server-to-Server Token', severity: 'critical', strict: true },
+        { pattern: /ghr_[a-zA-Z0-9]{36}/g, type: 'GitHub Refresh Token', severity: 'critical', strict: true },
+        
+        // OpenAI
+        { pattern: /sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}/g, type: 'OpenAI User API Key', severity: 'critical', strict: true },
+        { pattern: /sk-proj-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}/g, type: 'OpenAI Project Key', severity: 'critical', strict: true },
+        { pattern: /sk-proj-[a-zA-Z0-9_-]{20,}/g, type: 'OpenAI Project Key (Generic)', severity: 'critical', strict: true },
+        { pattern: /sk-[a-zA-Z0-9_-]{32,}/g, type: 'OpenAI API Key (Generic)', severity: 'critical', strict: true },
+        
+        // Stripe
+        { pattern: /sk_live_[0-9a-zA-Z]{24}/g, type: 'Stripe Live Secret Key', severity: 'critical', strict: true },
+        { pattern: /sk_test_[0-9a-zA-Z]{24}/g, type: 'Stripe Test Secret Key', severity: 'medium', strict: true },
+        { pattern: /rk_live_[0-9a-zA-Z]{99}/g, type: 'Stripe Restricted Key', severity: 'critical', strict: true },
+        
+        // Slack
+        { pattern: /xoxb-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}/g, type: 'Slack Bot Token', severity: 'critical', strict: true },
+        { pattern: /xoxp-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}/g, type: 'Slack User Token', severity: 'critical', strict: true },
+        { pattern: /xoxe\.xoxp-1-[0-9a-zA-Z]{166}/g, type: 'Slack Config Token', severity: 'critical', strict: true },
+        { pattern: /xoxe-1-[0-9a-zA-Z]{147}/g, type: 'Slack Refresh Token', severity: 'critical', strict: true },
+        { pattern: /T[a-zA-Z0-9_]{8}\/B[a-zA-Z0-9_]{8}\/[a-zA-Z0-9_]{24}/g, type: 'Slack Webhook', severity: 'high', strict: true },
+        
+        // Twitter
+        { pattern: /[1-9][0-9]+-[0-9a-zA-Z]{40}/g, type: 'Twitter Access Token', severity: 'critical', strict: true },
+        
+        // Facebook
+        { pattern: /EAACEdEose0cBA[0-9A-Za-z]+/g, type: 'Facebook Access Token', severity: 'critical', strict: true },
+        
+        // Instagram
+        { pattern: /[0-9a-fA-F]{7}\.[0-9a-fA-F]{32}/g, type: 'Instagram OAuth Token', severity: 'critical', strict: true },
+        
+        // Square
+        { pattern: /sqOatp-[0-9A-Za-z\-_]{22}/g, type: 'Square Access Token', severity: 'critical', strict: true },
+        { pattern: /sq0csp-[0-9A-Za-z\-_]{43}/g, type: 'Square OAuth Secret', severity: 'critical', strict: true },
+        
+        // Twilio
+        { pattern: /SK[0-9a-fA-F]{32}/g, type: 'Twilio API Key', severity: 'critical', strict: true },
+        { pattern: /55[0-9a-fA-F]{32}/g, type: 'Twilio Access Token', severity: 'critical', strict: true },
+        
+        // SendGrid
+        { pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g, type: 'SendGrid API Key', severity: 'critical', strict: true },
+        
+        // Mailgun
+        { pattern: /key-[0-9a-zA-Z]{32}/g, type: 'Mailgun API Key', severity: 'critical', strict: true },
+        
+        // MailChimp
+        { pattern: /[0-9a-f]{32}-us[0-9]{1,2}/g, type: 'MailChimp Access Token', severity: 'critical', strict: true },
+        
+        // Heroku
+        { pattern: /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, type: 'Heroku/UUID API Key', severity: 'medium', strict: false },
+        
+        // WakaTime
+        { pattern: /waka_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, type: 'WakaTime API Key', severity: 'critical', strict: true },
+        
+        // Amazon MWS
+        { pattern: /amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, type: 'Amazon MWS Auth Token', severity: 'critical', strict: true },
+        
+        // Foursquare
+        { pattern: /R_[0-9a-f]{32}/g, type: 'Foursquare Secret Key', severity: 'critical', strict: true },
+        
+        // Picatic
+        { pattern: /sk_live_[0-9a-z]{32}/g, type: 'Picatic API Key', severity: 'critical', strict: true },
+        
+        // Other services
+        { pattern: /glpat-[a-zA-Z0-9_-]{20}/g, type: 'GitLab Personal Access Token', severity: 'critical', strict: true },
+        { pattern: /sk-ant-[a-zA-Z0-9_-]{20,}/g, type: 'Anthropic API Key', severity: 'critical', strict: true },
+        { pattern: /hf_[a-zA-Z0-9]{34}/g, type: 'HuggingFace API Token', severity: 'critical', strict: true },
+        { pattern: /r8_[a-zA-Z0-9]{37}/g, type: 'Replicate API Token', severity: 'critical', strict: true },
+        { pattern: /dop_v1_[a-f0-9]{64}/g, type: 'DigitalOcean Token', severity: 'critical', strict: true },
+        { pattern: /secret_[a-zA-Z0-9]{43}/g, type: 'Notion Integration Token', severity: 'critical', strict: true },
+        
+        // Azure
+        { pattern: /DefaultEndpointsProtocol=https;AccountName=[a-z0-9]+;AccountKey=[A-Za-z0-9+/=]+/g, type: 'Azure Storage Connection', severity: 'critical', strict: true },
+        
+        // JWT
+        { pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, type: 'JWT Token', severity: 'medium', strict: false },
+        
+        // Basic Auth in URLs
+        { pattern: /https?:\/\/[A-Za-z0-9_\-]+:[A-Za-z0-9_\-]+@[^\s"']+/g, type: 'Basic Auth URL', severity: 'critical', strict: true },
+        
+        // Private Keys
+        { pattern: /-----BEGIN RSA PRIVATE KEY-----/g, type: 'RSA Private Key', severity: 'critical', strict: true },
+        { pattern: /-----BEGIN PRIVATE KEY-----/g, type: 'Private Key', severity: 'critical', strict: true },
+        
+        // Generic patterns with JSON support
+        { pattern: /["']?secret_key["']?\s*[:=]\s*["']([a-zA-Z0-9_\-/+=]{16,})["']/gi, type: 'Secret Key', severity: 'critical', strict: false },
+        { pattern: /["']?(?:api_key|apikey)["']?\s*[:=]\s*["']([a-zA-Z0-9_\-]{20,})["']/gi, type: 'API Key', severity: 'high', strict: false },
+        { pattern: /["']?access_token["']?\s*[:=]\s*["']([a-zA-Z0-9_\-/+=]{20,})["']/gi, type: 'Access Token', severity: 'high', strict: false },
+        { pattern: /["']?(?:api_secret|apiSecret)["']?\s*[:=]\s*["']([a-zA-Z0-9_\-/+=]{20,})["']/gi, type: 'API Secret', severity: 'critical', strict: false },
+        { pattern: /["']?client_secret["']?\s*[:=]\s*["']([a-zA-Z0-9_\-/+=]{16,})["']/gi, type: 'Client Secret', severity: 'critical', strict: false },
+    ],
+
+    credentialPatterns: [
+        { pattern: /["']?(?:password|passwd|pwd)["']?\s*[:=]\s*["']([^"']{6,})["']/gi, type: 'Password', severity: 'critical', strict: false },
+        { pattern: /["']?(?:db[_-]?password|database[_-]?password)["']?\s*[:=]\s*["']([^"']{6,})["']/gi, type: 'Database Password', severity: 'critical', strict: false },
+        { pattern: /["']?(?:connection[_-]?string|conn[_-]?str|database[_-]?url|db[_-]?url)["']?\s*[:=]\s*["']([^"']+)["']/gi, type: 'Connection String', severity: 'critical', strict: false },
+    ],
+
+    falsePositives: [
+        'example.com', 'localhost', '127.0.0.1', 'test', 'demo', 'sample', 
+        'placeholder', 'your_api_key', 'your_secret', 'api_key_here', 
+        'secret_here', 'xxx', 'yyy', 'zzz', 'insert_', '_here', 'your-', 
+        '-here', 'replace_', 'change_this', 'data:image', 'data:text'
+    ],
+
+    isFalsePositive(match, type) {
+        const matchLower = match.toLowerCase();
+        for (const fp of this.falsePositives) {
+            if (matchLower.includes(fp)) return true;
+        }
+        if (type === 'JWT Token') {
+            const parts = match.split('.');
+            if (parts.length < 3 || match.length < 50) return true;
+        }
+        if (type.includes('Password')) {
+            if (/["'](?:true|false|null|undefined|none|\*+|\.{3,})["']/i.test(match)) return true;
+        }
+        return false;
+    },
+
+    scanWithPatterns(content, patterns, category) {
+        const findings = [];
+        for (const patternInfo of patterns) {
+            try {
+                patternInfo.pattern.lastIndex = 0;
+                let match;
+                while ((match = patternInfo.pattern.exec(content)) !== null) {
+                    const matchText = match[0];
+                    if (!patternInfo.strict && this.isFalsePositive(matchText, patternInfo.type)) continue;
+                    findings.push({
+                        category: category,
+                        type: patternInfo.type,
+                        match: matchText.length > 200 ? matchText.substring(0, 200) + '...' : matchText,
+                        severity: patternInfo.severity || 'info'
+                    });
+                    if (patternInfo.pattern.lastIndex === match.index) {
+                        patternInfo.pattern.lastIndex++;
+                    }
+                }
+            } catch (e) {
+                console.error('Pattern scan error:', patternInfo.type, e);
+            }
+        }
+        return findings;
+    },
+
+    removeDuplicates(findings) {
+        const seen = new Set();
+        return findings.filter(f => {
+            const key = `${f.type}:${f.match}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    },
+
+    scan(content, url = '') {
+        if (!content || typeof content !== 'string' || content.length > 5 * 1024 * 1024) {
+            return null;
+        }
+        const apiKeys = this.removeDuplicates(this.scanWithPatterns(content, this.apiKeyPatterns, 'API Keys'));
+        const credentials = this.removeDuplicates(this.scanWithPatterns(content, this.credentialPatterns, 'Credentials'));
+        const totalFindings = apiKeys.length + credentials.length;
+        if (totalFindings === 0) return null;
+        return { url, timestamp: new Date().toISOString(), apiKeys, credentials, totalFindings };
+    },
+
+    isScannable(contentType) {
+        if (!contentType) return false;
+        const scannableTypes = ['text/html', 'text/plain', 'text/javascript', 'application/javascript', 'application/json', 'application/xml', 'text/xml'];
+        return scannableTypes.some(type => contentType.toLowerCase().includes(type));
+    }
+};
+
+// Update badge with findings count
+function updateBadge() {
+    const count = securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
+    browser.browserAction.setBadgeText({ text: count > 0 ? String(count) : '' });
+    browser.browserAction.setBadgeBackgroundColor({ color: '#dc3545' });
+}
+
+// Clear security findings
+function clearSecurityFindings() {
+    securityFindings = [];
+    browser.storage.local.set({ securityFindings: [] });
+    updateBadge();
+}
 
 // Load saved settings from storage on startup
-browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceRules']).then((result) => {
+browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceRules', 'securityFindings']).then((result) => {
   if (result.interceptSettings) {
     interceptSettings = { ...interceptSettings, ...result.interceptSettings };
   }
@@ -44,6 +254,10 @@ browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceR
   }
   if (result.matchReplaceRules) {
     matchReplaceRules = result.matchReplaceRules;
+  }
+  if (result.securityFindings) {
+    securityFindings = result.securityFindings;
+    updateBadge();
   }
 }).catch((err) => {
   console.error('Failed to load settings from storage:', err);
@@ -769,6 +983,34 @@ browser.webRequest.onHeadersReceived.addListener(
               const text = decoder.decode(combinedData);
               request.responseBody = text.substring(0, 50000);
               request.isBase64 = false;
+              
+              // Background security scanning - runs even when DevTools is closed
+              if (captureEnabled && SecurityScanner.isScannable(contentType)) {
+                const scanResults = SecurityScanner.scan(text, details.url);
+                if (scanResults && scanResults.totalFindings > 0) {
+                  scanResults.requestId = request.id;
+                  securityFindings.push(scanResults);
+                  
+                  // Limit stored findings
+                  if (securityFindings.length > MAX_FINDINGS) {
+                    securityFindings = securityFindings.slice(-MAX_FINDINGS);
+                  }
+                  
+                  // Persist findings to storage
+                  browser.storage.local.set({ securityFindings }).catch(err => {
+                    console.error('Failed to save security findings:', err);
+                  });
+                  
+                  // Update badge
+                  updateBadge();
+                  
+                  // Notify DevTools if connected
+                  notifyDevTools({
+                    type: 'securityFinding',
+                    finding: scanResults
+                  });
+                }
+              }
             }
             
             notifyDevTools({
@@ -871,7 +1113,8 @@ browser.runtime.onConnect.addListener((port) => {
       captureEnabled: captureEnabled,
       interceptEnabled: interceptEnabled,
       interceptSettings: interceptSettings,
-      requests: Array.from(requests.values())
+      requests: Array.from(requests.values()),
+      securityFindings: securityFindings
     });
     
     port.onMessage.addListener((msg) => {
@@ -964,6 +1207,15 @@ function handleDevToolsMessage(msg, port) {
       
     case 'getInterceptSettings':
       port.postMessage({ type: 'interceptSettingsResponse', settings: interceptSettings });
+      break;
+      
+    case 'getSecurityFindings':
+      port.postMessage({ type: 'securityFindingsResponse', findings: securityFindings });
+      break;
+      
+    case 'clearSecurityFindings':
+      clearSecurityFindings();
+      notifyDevTools({ type: 'securityFindingsCleared' });
       break;
       
     case 'forwardResponse':
