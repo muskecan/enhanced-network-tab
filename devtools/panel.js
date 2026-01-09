@@ -31,8 +31,10 @@ let matchReplaceRules = [];
 
 // Security Scanner State
 let securityFindings = []; // All findings from all requests
+let libraryFindings = []; // Vulnerable library findings
 let unseenFindingsCount = 0; // Number of unseen findings (for badge)
 let requestFindings = new Map(); // Map of requestId -> findings
+let requestLibraryFindings = new Map(); // Map of requestId -> library findings
 
 // Theme Management
 let currentTheme = 'auto'; // 'auto', 'light', or 'dark'
@@ -660,13 +662,18 @@ securitySeverityFilter.addEventListener('change', () => {
 clearSecurityFindingsBtn.addEventListener('click', () => {
     if (clearSecurityFindingsBtn.textContent === 'Confirm?') {
         securityFindings = [];
+        libraryFindings = [];
         requestFindings.clear();
+        requestLibraryFindings.clear();
         unseenFindingsCount = 0;
         updateSecurityBadge();
         renderSecurityModal();
         renderRequestList(); // Update request list to remove security indicators
         clearSecurityFindingsBtn.textContent = 'Clear All';
         clearSecurityFindingsBtn.classList.remove('confirm-state');
+        // Also notify background to clear
+        port.postMessage({ type: 'clearSecurityFindings' });
+        port.postMessage({ type: 'clearLibraryFindings' });
     } else {
         clearSecurityFindingsBtn.textContent = 'Confirm?';
         clearSecurityFindingsBtn.classList.add('confirm-state');
@@ -682,7 +689,18 @@ clearSecurityFindingsBtn.addEventListener('click', () => {
 
 // Export All Security Findings
 exportAllSecurityBtn.addEventListener('click', () => {
-    exportSecurityFindings(securityFindings, 'all-security-findings.json');
+    const allFindings = {
+        securityFindings: securityFindings,
+        libraryFindings: libraryFindings,
+        exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(allFindings, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'all-security-findings.json';
+    a.click();
+    URL.revokeObjectURL(url);
 });
 
 // Export Security Findings for Selected Request
@@ -766,7 +784,7 @@ function updateSecurityBadge() {
  */
 function renderSecurityModal() {
     // Update summary counts
-    let apiKeyCount = 0, credentialCount = 0, emailCount = 0, endpointCount = 0, pathCount = 0;
+    let apiKeyCount = 0, credentialCount = 0, emailCount = 0, endpointCount = 0, pathCount = 0, libraryCount = 0;
     
     securityFindings.forEach(finding => {
         // Handle findings from both panel scanner and background scanner
@@ -778,14 +796,24 @@ function renderSecurityModal() {
         pathCount += (finding.paths || []).length;
     });
     
+    // Count unique vulnerable library+version combinations
+    const uniqueLibs = new Set();
+    libraryFindings.forEach(finding => {
+        (finding.libraries || []).forEach(lib => {
+            uniqueLibs.add(`${lib.library}@${lib.version}`);
+        });
+    });
+    libraryCount = uniqueLibs.size;
+    
     document.getElementById('summaryApiKeys').textContent = apiKeyCount;
     document.getElementById('summaryCredentials').textContent = credentialCount;
+    document.getElementById('summaryLibraries').textContent = libraryCount;
     document.getElementById('summaryEmails').textContent = emailCount;
     document.getElementById('summaryEndpoints').textContent = endpointCount;
     document.getElementById('summaryPaths').textContent = pathCount;
     
     // Update modal badge
-    const totalSignificant = apiKeyCount + credentialCount;
+    const totalSignificant = apiKeyCount + credentialCount + libraryCount;
     document.getElementById('securityModalBadge').textContent = totalSignificant;
     
     // Render the findings list
@@ -802,7 +830,10 @@ function renderSecurityFindingsList() {
     
     securityFindingsList.innerHTML = '';
     
-    if (securityFindings.length === 0) {
+    const hasSecurityFindings = securityFindings.length > 0;
+    const hasLibraryFindings = libraryFindings.length > 0;
+    
+    if (!hasSecurityFindings && !hasLibraryFindings) {
         securityFindingsList.innerHTML = `
             <div class="security-no-findings">
                 <p>No security findings yet. Start browsing with capture enabled to scan response bodies.</p>
@@ -814,48 +845,136 @@ function renderSecurityFindingsList() {
     // Group findings by URL
     const groupedFindings = new Map();
     
-    securityFindings.forEach(finding => {
-        const url = finding.url;
-        if (!groupedFindings.has(url)) {
-            groupedFindings.set(url, {
-                url: url,
-                requestId: finding.requestId,
-                requestNumber: finding.requestNumber,
-                items: []
-            });
-        }
-        
-        const group = groupedFindings.get(url);
-        
-        // Add items based on category filter
-        const categories = categoryFilter === 'all' 
-            ? ['apiKeys', 'credentials', 'emails', 'apiEndpoints', 'parameters', 'paths']
-            : [categoryFilter];
-        
-        categories.forEach(cat => {
-            if (finding[cat]) {
-                finding[cat].forEach(item => {
-                    // Apply severity filter
-                    if (severityFilter !== 'all' && item.severity !== severityFilter) {
-                        return;
-                    }
-                    
-                    // Apply search filter
-                    if (searchTerm) {
-                        const searchable = `${item.type} ${item.match} ${item.context || ''}`.toLowerCase();
-                        if (!searchable.includes(searchTerm)) {
-                            return;
-                        }
-                    }
-                    
-                    group.items.push({
-                        ...item,
-                        requestId: finding.requestId
-                    });
+    // Process security findings
+    if (categoryFilter !== 'vulnerableLibraries') {
+        securityFindings.forEach(finding => {
+            const url = finding.url;
+            if (!groupedFindings.has(url)) {
+                groupedFindings.set(url, {
+                    url: url,
+                    requestId: finding.requestId,
+                    requestNumber: finding.requestNumber,
+                    items: []
                 });
             }
+            
+            const group = groupedFindings.get(url);
+            
+            // Add items based on category filter
+            const categories = categoryFilter === 'all' 
+                ? ['apiKeys', 'credentials', 'emails', 'apiEndpoints', 'parameters', 'paths']
+                : [categoryFilter];
+            
+            categories.forEach(cat => {
+                if (finding[cat]) {
+                    finding[cat].forEach(item => {
+                        // Apply severity filter
+                        if (severityFilter !== 'all' && item.severity !== severityFilter) {
+                            return;
+                        }
+                        
+                        // Apply search filter
+                        if (searchTerm) {
+                            const searchable = `${item.type} ${item.match} ${item.context || ''}`.toLowerCase();
+                            if (!searchable.includes(searchTerm)) {
+                                return;
+                            }
+                        }
+                        
+                        group.items.push({
+                            ...item,
+                            requestId: finding.requestId
+                        });
+                    });
+                }
+            });
         });
-    });
+    }
+    
+    // Process library findings - merge same library+version vulnerabilities
+    if (categoryFilter === 'all' || categoryFilter === 'vulnerableLibraries') {
+        // First, collect all vulnerabilities per library+version
+        const libraryVulnMap = new Map(); // key: "url|library|version" -> { vulns: [], ... }
+        
+        libraryFindings.forEach(finding => {
+            const url = finding.url;
+            
+            (finding.libraries || []).forEach(lib => {
+                const key = `${url}|${lib.library}|${lib.version}`;
+                
+                if (!libraryVulnMap.has(key)) {
+                    libraryVulnMap.set(key, {
+                        url: url,
+                        library: lib.library,
+                        version: lib.version,
+                        detectedVia: lib.detectedVia,
+                        requestId: finding.requestId,
+                        vulnerabilities: []
+                    });
+                }
+                
+                const entry = libraryVulnMap.get(key);
+                (lib.vulnerabilities || []).forEach(vuln => {
+                    // Avoid duplicate vulnerabilities
+                    const vulnKey = vuln.summary + (vuln.cve?.join(',') || '');
+                    if (!entry.vulnerabilities.some(v => (v.summary + (v.cve?.join(',') || '')) === vulnKey)) {
+                        entry.vulnerabilities.push(vuln);
+                    }
+                });
+            });
+        });
+        
+        // Now add merged entries to groups
+        libraryVulnMap.forEach((libEntry, key) => {
+            const url = libEntry.url;
+            
+            if (!groupedFindings.has(url)) {
+                groupedFindings.set(url, {
+                    url: url,
+                    requestId: libEntry.requestId,
+                    items: []
+                });
+            }
+            
+            const group = groupedFindings.get(url);
+            
+            // Filter vulnerabilities by severity
+            let filteredVulns = libEntry.vulnerabilities;
+            if (severityFilter !== 'all') {
+                filteredVulns = filteredVulns.filter(v => v.severity === severityFilter);
+            }
+            
+            // Apply search filter
+            if (searchTerm) {
+                const searchable = `${libEntry.library} ${libEntry.version} ${filteredVulns.map(v => v.summary + ' ' + (v.cve?.join(' ') || '')).join(' ')}`.toLowerCase();
+                if (!searchable.includes(searchTerm)) {
+                    return;
+                }
+            }
+            
+            if (filteredVulns.length === 0) return;
+            
+            // Determine highest severity for merged entry
+            const severityOrder = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+            const highestSeverity = filteredVulns.reduce((highest, v) => {
+                return severityOrder[v.severity] > severityOrder[highest] ? v.severity : highest;
+            }, 'info');
+            
+            group.items.push({
+                type: `Vulnerable Library: ${libEntry.library}`,
+                match: `${libEntry.library}@${libEntry.version}`,
+                severity: highestSeverity,
+                isMerged: filteredVulns.length > 1,
+                mergedCount: filteredVulns.length,
+                isLibrary: true,
+                library: libEntry.library,
+                version: libEntry.version,
+                detectedVia: libEntry.detectedVia,
+                vulnerabilities: filteredVulns, // All vulnerabilities for this lib
+                requestId: libEntry.requestId
+            });
+        });
+    }
     
     // Render grouped findings
     let hasItems = false;
@@ -880,7 +999,9 @@ function renderSecurityFindingsList() {
         itemsEl.className = 'finding-group-items';
         
         group.items.forEach((item, index) => {
-            const itemEl = createFindingItemElement(item, `${group.requestId}-${index}`);
+            const itemEl = item.isLibrary 
+                ? createLibraryFindingElement(item, `${group.requestId}-lib-${index}`)
+                : createFindingItemElement(item, `${group.requestId}-${index}`);
             itemsEl.appendChild(itemEl);
         });
         
@@ -896,6 +1017,90 @@ function renderSecurityFindingsList() {
             </div>
         `;
     }
+}
+
+/**
+ * Create a library vulnerability finding element (merged)
+ */
+function createLibraryFindingElement(item, id) {
+    const el = document.createElement('div');
+    el.className = 'finding-item library-finding';
+    el.id = `finding-${id}`;
+    
+    const severity = item.severity || 'medium';
+    const vulns = item.vulnerabilities || [item.vulnerability]; // Support both merged and single
+    
+    // Create header with merged badge if applicable
+    const header = document.createElement('div');
+    header.className = 'finding-header';
+    header.innerHTML = `
+        <span class="finding-severity ${severity}">${severity}</span>
+        ${item.isMerged ? `<span class="finding-merged-badge">MERGED ×${item.mergedCount}</span>` : ''}
+        <span class="finding-type library-type">
+            <span class="library-icon">📦</span>
+            ${escapeHTML(item.library)} @ ${escapeHTML(item.version)}
+        </span>
+        <span class="finding-detected-via">${item.detectedVia}</span>
+        <span class="finding-toggle">▼</span>
+    `;
+    
+    // Create body with all vulnerability details
+    const body = document.createElement('div');
+    body.className = 'finding-body library-body';
+    body.id = `finding-body-${id}`;
+    
+    // Build vulnerability cards for each vulnerability
+    const vulnCards = vulns.map((vuln, idx) => {
+        const cveLinks = (vuln.cve || []).map(cve => 
+            `<a href="https://nvd.nist.gov/vuln/detail/${cve}" target="_blank" class="cve-link">${escapeHTML(cve)}</a>`
+        ).join(' ');
+        
+        const cweList = (vuln.cwe || []).map(cwe => 
+            `<span class="cwe-tag">${escapeHTML(cwe)}</span>`
+        ).join(' ');
+        
+        let infoLinks = '';
+        try {
+            infoLinks = (vuln.info || []).slice(0, 3).map(url => 
+                `<a href="${escapeHTML(url)}" target="_blank" class="info-link" title="${escapeHTML(url)}">${escapeHTML(new URL(url).hostname)}</a>`
+            ).join(' ');
+        } catch (e) {
+            // Invalid URL, skip
+        }
+        
+        return `
+            <div class="vuln-card ${vuln.severity || 'medium'}">
+                <div class="vuln-card-header">
+                    <span class="vuln-card-severity ${vuln.severity || 'medium'}">${vuln.severity || 'medium'}</span>
+                    ${cveLinks || '<span class="no-cve">No CVE</span>'}
+                </div>
+                <div class="vuln-summary">${escapeHTML(vuln.summary || 'No description available')}</div>
+                <div class="vuln-details">
+                    ${cweList ? `<div class="vuln-cwes">${cweList}</div>` : ''}
+                    ${vuln.below ? `<div class="vuln-version"><strong>Affected:</strong> &lt; ${escapeHTML(vuln.below)}${vuln.atOrAbove ? ` (≥ ${escapeHTML(vuln.atOrAbove)})` : ''}</div>` : ''}
+                    ${infoLinks ? `<div class="vuln-info">${infoLinks}</div>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    body.innerHTML = `<div class="vuln-cards">${vulnCards}</div>`;
+    
+    // Add click event listener to header
+    header.addEventListener('click', () => {
+        const toggle = header.querySelector('.finding-toggle');
+        if (body.classList.contains('expanded')) {
+            body.classList.remove('expanded');
+            toggle.textContent = '▼';
+        } else {
+            body.classList.add('expanded');
+            toggle.textContent = '▲';
+        }
+    });
+    
+    el.appendChild(header);
+    el.appendChild(body);
+    return el;
 }
 
 /**
@@ -1437,9 +1642,18 @@ port.onMessage.addListener((msg) => {
                     }
                 });
                 unseenFindingsCount = msg.securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
-                updateSecurityBadge();
-                renderSecurityFindingsList();
             }
+            // Load library findings from background
+            if (msg.libraryFindings && msg.libraryFindings.length > 0) {
+                msg.libraryFindings.forEach(finding => {
+                    if (!libraryFindings.some(f => f.url === finding.url && f.timestamp === finding.timestamp)) {
+                        libraryFindings.push(finding);
+                    }
+                });
+                unseenFindingsCount += msg.libraryFindings.reduce((acc, f) => acc + f.totalFindings, 0);
+            }
+            updateSecurityBadge();
+            renderSecurityFindingsList();
             renderRequestList();
             break;
             
@@ -1524,9 +1738,11 @@ port.onMessage.addListener((msg) => {
         case 'requestsCleared':
             requests = [];
             requestCounter = 0;
-            // Also clear security findings
+            // Also clear security and library findings
             securityFindings = [];
+            libraryFindings = [];
             requestFindings.clear();
+            requestLibraryFindings.clear();
             unseenFindingsCount = 0;
             updateSecurityBadge();
             renderRequestList();
@@ -1560,6 +1776,36 @@ port.onMessage.addListener((msg) => {
                     }
                 });
                 unseenFindingsCount = msg.findings.reduce((acc, f) => acc + f.totalFindings, 0);
+                updateSecurityBadge();
+                renderSecurityFindingsList();
+            }
+            break;
+            
+        case 'libraryFinding':
+            // New vulnerable library finding from background scanner
+            if (msg.finding && !libraryFindings.some(f => f.url === msg.finding.url && f.timestamp === msg.finding.timestamp)) {
+                libraryFindings.push(msg.finding);
+                unseenFindingsCount += msg.finding.totalFindings;
+                updateSecurityBadge();
+                renderSecurityFindingsList();
+            }
+            break;
+            
+        case 'libraryFindingsCleared':
+            libraryFindings = [];
+            requestLibraryFindings.clear();
+            updateSecurityBadge();
+            renderSecurityFindingsList();
+            break;
+            
+        case 'libraryFindingsResponse':
+            // Response to getLibraryFindings request
+            if (msg.findings && msg.findings.length > 0) {
+                msg.findings.forEach(finding => {
+                    if (!libraryFindings.some(f => f.url === finding.url && f.timestamp === finding.timestamp)) {
+                        libraryFindings.push(finding);
+                    }
+                });
                 updateSecurityBadge();
                 renderSecurityFindingsList();
             }

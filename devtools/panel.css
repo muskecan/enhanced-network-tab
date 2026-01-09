@@ -1797,6 +1797,200 @@ body.dark-mode .syntax-comment { color: #8b949e; }
     border-radius: 0 0 8px 8px;
 }
 
+/* Library Finding Styles */
+.library-finding {
+    border-left: 3px solid #e67e22;
+}
+
+.library-finding .finding-header {
+    background: linear-gradient(90deg, rgba(230, 126, 34, 0.1), var(--bg-tertiary));
+}
+
+.library-type {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.library-icon {
+    font-size: 14px;
+}
+
+.finding-detected-via {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    margin-left: auto;
+    margin-right: 10px;
+}
+
+.finding-merged-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: linear-gradient(135deg, #e67e22, #d35400);
+    color: white;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.library-body {
+    background: var(--bg-secondary);
+    padding: 12px;
+}
+
+.vuln-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.vuln-card {
+    background: var(--bg-primary);
+    border-radius: 8px;
+    padding: 12px;
+    border-left: 3px solid var(--border-primary);
+}
+
+.vuln-card.critical {
+    border-left-color: #dc3545;
+}
+
+.vuln-card.high {
+    border-left-color: #fd7e14;
+}
+
+.vuln-card.medium {
+    border-left-color: #ffc107;
+}
+
+.vuln-card.low {
+    border-left-color: #28a745;
+}
+
+.vuln-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.vuln-card-severity {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.vuln-card-severity.critical {
+    background: rgba(220, 53, 69, 0.2);
+    color: #dc3545;
+}
+
+.vuln-card-severity.high {
+    background: rgba(253, 126, 20, 0.2);
+    color: #fd7e14;
+}
+
+.vuln-card-severity.medium {
+    background: rgba(255, 193, 7, 0.2);
+    color: #d39e00;
+}
+
+.vuln-card-severity.low {
+    background: rgba(40, 167, 69, 0.2);
+    color: #28a745;
+}
+
+.no-cve {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.vuln-summary {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+}
+
+.vuln-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.vuln-details > div {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.vuln-details strong {
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.cve-link {
+    color: #e74c3c;
+    text-decoration: none;
+    padding: 2px 6px;
+    background: rgba(231, 76, 60, 0.1);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.cve-link:hover {
+    background: rgba(231, 76, 60, 0.2);
+    text-decoration: underline;
+}
+
+.cwe-tag {
+    color: #e67e22;
+    padding: 2px 6px;
+    background: rgba(230, 126, 34, 0.1);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.info-link {
+    color: var(--text-link);
+    text-decoration: none;
+    padding: 2px 6px;
+    background: rgba(52, 152, 219, 0.1);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.info-link:hover {
+    background: rgba(52, 152, 219, 0.2);
+    text-decoration: underline;
+}
+
+.vuln-version {
+    font-family: var(--font-mono);
+}
+
+/* Summary item for libraries - orange/amber theme */
+#summaryLibrariesItem {
+    background: rgba(230, 126, 34, 0.15);
+    border-color: #e67e22;
+}
+
+#summaryLibrariesItem .summary-count {
+    color: white;
+}
+
 /* Dark mode adjustments */
 body.dark-mode .finding-severity.medium {
     color: #1a1a1a;
@@ -1820,6 +2014,22 @@ body.dark-mode .summary-item.low {
 
 body.dark-mode .summary-item.info {
     background: rgba(23, 162, 184, 0.25);
+}
+
+body.dark-mode #summaryLibrariesItem {
+    background: rgba(230, 126, 34, 0.25);
+}
+
+body.dark-mode .library-finding {
+    border-left-color: #e67e22;
+}
+
+body.dark-mode .finding-merged-badge {
+    background: linear-gradient(135deg, #d35400, #c0392b);
+}
+
+body.dark-mode .vuln-card {
+    background: var(--bg-tertiary);
 }
 
 /* Responsive adjustments for security modal */

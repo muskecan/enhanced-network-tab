@@ -228,10 +228,377 @@ const SecurityScanner = {
     }
 };
 
-// Update badge with findings count
+// ==========================================
+// LIBRARY SCANNER - Vulnerable JS Library Detection (Retire.js-style)
+// ==========================================
+let libraryFindings = [];
+const MAX_LIBRARY_FINDINGS = 500;
+
+const LibraryScanner = {
+    db: null,
+    compiledPatterns: null,
+    initialized: false,
+    scannedUrls: new Set(), // Cache to avoid re-scanning same URLs
+    
+    // Version placeholder used in jsrepository.json
+    VERSION_PLACEHOLDER: /§§version§§/g,
+    VERSION_PATTERN: '([0-9]+(?:\\.[0-9a-z]+)*(?:[._-](?:alpha|beta|rc|pre|dev|snapshot|final|release|build|M|SP)[._-]?[0-9]*)?)',
+    
+    /**
+     * Initialize the scanner by loading jsrepository.json
+     */
+    async init() {
+        if (this.initialized) return true;
+        
+        try {
+            const url = browser.runtime.getURL('jsrepository.json');
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to load jsrepository.json: ${response.status}`);
+            }
+            this.db = await response.json();
+            this.compiledPatterns = this.compilePatterns();
+            this.initialized = true;
+            console.log(`[LibraryScanner] Initialized with ${Object.keys(this.db).length} libraries`);
+            return true;
+        } catch (err) {
+            console.error('[LibraryScanner] Initialization failed:', err);
+            return false;
+        }
+    },
+    
+    /**
+     * Compile all regex patterns from the database for efficient matching
+     */
+    compilePatterns() {
+        const patterns = {
+            filename: [],
+            uri: [],
+            filecontent: []
+        };
+        
+        for (const [libName, libData] of Object.entries(this.db)) {
+            if (!libData.extractors) continue;
+            
+            // Compile filename patterns
+            if (libData.extractors.filename) {
+                for (const pattern of libData.extractors.filename) {
+                    try {
+                        const regexStr = pattern.replace(this.VERSION_PLACEHOLDER, this.VERSION_PATTERN);
+                        patterns.filename.push({
+                            library: libName,
+                            regex: new RegExp(regexStr, 'i'),
+                            original: pattern
+                        });
+                    } catch (e) {
+                        // Skip invalid patterns
+                    }
+                }
+            }
+            
+            // Compile URI patterns
+            if (libData.extractors.uri) {
+                for (const pattern of libData.extractors.uri) {
+                    try {
+                        const regexStr = pattern.replace(this.VERSION_PLACEHOLDER, this.VERSION_PATTERN);
+                        patterns.uri.push({
+                            library: libName,
+                            regex: new RegExp(regexStr, 'i'),
+                            original: pattern
+                        });
+                    } catch (e) {
+                        // Skip invalid patterns
+                    }
+                }
+            }
+            
+            // Compile filecontent patterns
+            if (libData.extractors.filecontent) {
+                for (const pattern of libData.extractors.filecontent) {
+                    try {
+                        const regexStr = pattern.replace(this.VERSION_PLACEHOLDER, this.VERSION_PATTERN);
+                        patterns.filecontent.push({
+                            library: libName,
+                            regex: new RegExp(regexStr, 'i'),
+                            original: pattern
+                        });
+                    } catch (e) {
+                        // Skip invalid patterns
+                    }
+                }
+            }
+        }
+        
+        return patterns;
+    },
+    
+    /**
+     * Parse version string into comparable components
+     */
+    parseVersion(version) {
+        if (!version) return null;
+        const parts = version.split(/[.\-_]/).map(p => {
+            const num = parseInt(p, 10);
+            return isNaN(num) ? p : num;
+        });
+        return parts;
+    },
+    
+    /**
+     * Compare two versions: returns -1 if a < b, 0 if equal, 1 if a > b
+     */
+    compareVersions(a, b) {
+        const partsA = this.parseVersion(a);
+        const partsB = this.parseVersion(b);
+        
+        if (!partsA || !partsB) return 0;
+        
+        const maxLen = Math.max(partsA.length, partsB.length);
+        
+        for (let i = 0; i < maxLen; i++) {
+            let pa = partsA[i];
+            let pb = partsB[i];
+            
+            // Handle missing parts (treat as 0)
+            if (pa === undefined) pa = 0;
+            if (pb === undefined) pb = 0;
+            
+            // Handle pre-release tags (alpha < beta < rc < release)
+            if (typeof pa === 'string' && typeof pb === 'string') {
+                const order = { 'alpha': 0, 'beta': 1, 'rc': 2, 'pre': 0, 'dev': -1, 'snapshot': -1 };
+                const oa = order[pa.toLowerCase()] ?? 3;
+                const ob = order[pb.toLowerCase()] ?? 3;
+                if (oa !== ob) return oa < ob ? -1 : 1;
+            } else if (typeof pa === 'string') {
+                return -1; // Pre-release is less than release
+            } else if (typeof pb === 'string') {
+                return 1;
+            } else {
+                if (pa < pb) return -1;
+                if (pa > pb) return 1;
+            }
+        }
+        
+        return 0;
+    },
+    
+    /**
+     * Check if a version falls within a vulnerability range
+     */
+    isVersionVulnerable(version, vuln) {
+        // Check "below" constraint
+        if (vuln.below) {
+            if (this.compareVersions(version, vuln.below) >= 0) {
+                return false; // Version is >= below, so not vulnerable
+            }
+        }
+        
+        // Check "atOrAbove" constraint
+        if (vuln.atOrAbove) {
+            if (this.compareVersions(version, vuln.atOrAbove) < 0) {
+                return false; // Version is < atOrAbove, so not vulnerable
+            }
+        }
+        
+        return true;
+    },
+    
+    /**
+     * Get vulnerabilities for a specific library version
+     */
+    getVulnerabilities(library, version) {
+        const libData = this.db[library];
+        if (!libData || !libData.vulnerabilities) return [];
+        
+        const vulns = [];
+        for (const vuln of libData.vulnerabilities) {
+            if (this.isVersionVulnerable(version, vuln)) {
+                vulns.push({
+                    severity: vuln.severity || 'unknown',
+                    summary: vuln.identifiers?.summary || 'Unknown vulnerability',
+                    cve: vuln.identifiers?.CVE || [],
+                    cwe: vuln.cwe || [],
+                    info: vuln.info || [],
+                    below: vuln.below,
+                    atOrAbove: vuln.atOrAbove
+                });
+            }
+        }
+        
+        return vulns;
+    },
+    
+    /**
+     * Scan URL/filename for library detection
+     */
+    scanUrl(url) {
+        if (!this.initialized || !this.compiledPatterns) return null;
+        
+        // Extract filename from URL
+        const urlObj = new URL(url);
+        const pathname = urlObj.pathname;
+        const filename = pathname.split('/').pop();
+        
+        // Try filename patterns first
+        for (const pattern of this.compiledPatterns.filename) {
+            const match = filename.match(pattern.regex);
+            if (match && match[1]) {
+                return {
+                    library: pattern.library,
+                    version: match[1],
+                    detectedVia: 'filename'
+                };
+            }
+        }
+        
+        // Try URI patterns
+        for (const pattern of this.compiledPatterns.uri) {
+            const match = pathname.match(pattern.regex);
+            if (match && match[1]) {
+                return {
+                    library: pattern.library,
+                    version: match[1],
+                    detectedVia: 'uri'
+                };
+            }
+        }
+        
+        return null;
+    },
+    
+    /**
+     * Scan file content for library signatures
+     */
+    scanContent(content, maxLength = 500000) {
+        if (!this.initialized || !this.compiledPatterns) return [];
+        if (!content || content.length > maxLength) return [];
+        
+        const detected = [];
+        const seenLibraries = new Set();
+        
+        // Only scan first portion of content for performance
+        const scanContent = content.substring(0, maxLength);
+        
+        for (const pattern of this.compiledPatterns.filecontent) {
+            if (seenLibraries.has(pattern.library)) continue;
+            
+            const match = scanContent.match(pattern.regex);
+            if (match && match[1]) {
+                detected.push({
+                    library: pattern.library,
+                    version: match[1],
+                    detectedVia: 'filecontent'
+                });
+                seenLibraries.add(pattern.library);
+            }
+        }
+        
+        return detected;
+    },
+    
+    /**
+     * Main scan function - checks URL and content for vulnerable libraries
+     */
+    scan(url, content = null) {
+        if (!this.initialized) return null;
+        
+        // Check cache
+        if (this.scannedUrls.has(url)) return null;
+        
+        const findings = [];
+        
+        // Scan URL first
+        try {
+            const urlResult = this.scanUrl(url);
+            if (urlResult) {
+                const vulns = this.getVulnerabilities(urlResult.library, urlResult.version);
+                if (vulns.length > 0) {
+                    findings.push({
+                        library: urlResult.library,
+                        version: urlResult.version,
+                        detectedVia: urlResult.detectedVia,
+                        vulnerabilities: vulns,
+                        url: url
+                    });
+                }
+            }
+        } catch (e) {
+            // Invalid URL, skip
+        }
+        
+        // Scan content if provided and URL didn't yield results
+        if (content && findings.length === 0) {
+            const contentResults = this.scanContent(content);
+            for (const result of contentResults) {
+                const vulns = this.getVulnerabilities(result.library, result.version);
+                if (vulns.length > 0) {
+                    findings.push({
+                        library: result.library,
+                        version: result.version,
+                        detectedVia: result.detectedVia,
+                        vulnerabilities: vulns,
+                        url: url
+                    });
+                }
+            }
+        }
+        
+        // Mark URL as scanned
+        this.scannedUrls.add(url);
+        
+        // Limit cache size
+        if (this.scannedUrls.size > 10000) {
+            const iterator = this.scannedUrls.values();
+            for (let i = 0; i < 5000; i++) {
+                this.scannedUrls.delete(iterator.next().value);
+            }
+        }
+        
+        if (findings.length === 0) return null;
+        
+        return {
+            type: 'vulnerableLibraries',
+            url: url,
+            timestamp: new Date().toISOString(),
+            libraries: findings,
+            totalFindings: findings.reduce((acc, f) => acc + f.vulnerabilities.length, 0)
+        };
+    },
+    
+    /**
+     * Check if a URL should be scanned (is a JS file)
+     */
+    isJavaScriptUrl(url) {
+        try {
+            const urlObj = new URL(url);
+            const pathname = urlObj.pathname.toLowerCase();
+            return pathname.endsWith('.js') || pathname.includes('.js?');
+        } catch {
+            return false;
+        }
+    },
+    
+    /**
+     * Clear the URL cache
+     */
+    clearCache() {
+        this.scannedUrls.clear();
+    }
+};
+
+// Initialize LibraryScanner on startup
+LibraryScanner.init().then(success => {
+    if (success) {
+        console.log('[LibraryScanner] Ready for scanning');
+    }
+});
+
+// Update badge with findings count (includes both security and library findings)
 function updateBadge() {
-    const count = securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
-    browser.browserAction.setBadgeText({ text: count > 0 ? String(count) : '' });
+    const securityCount = securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
+    const libraryCount = libraryFindings.reduce((acc, f) => acc + f.totalFindings, 0);
+    const totalCount = securityCount + libraryCount;
+    browser.browserAction.setBadgeText({ text: totalCount > 0 ? String(totalCount) : '' });
     browser.browserAction.setBadgeBackgroundColor({ color: '#dc3545' });
 }
 
@@ -242,8 +609,16 @@ function clearSecurityFindings() {
     updateBadge();
 }
 
+// Clear library findings
+function clearLibraryFindings() {
+    libraryFindings = [];
+    LibraryScanner.clearCache();
+    browser.storage.local.set({ libraryFindings: [] });
+    updateBadge();
+}
+
 // Load saved settings from storage on startup
-browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceRules', 'securityFindings']).then((result) => {
+browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceRules', 'securityFindings', 'libraryFindings']).then((result) => {
   if (result.interceptSettings) {
     interceptSettings = { ...interceptSettings, ...result.interceptSettings };
   }
@@ -256,8 +631,11 @@ browser.storage.local.get(['interceptSettings', 'captureEnabled', 'matchReplaceR
   }
   if (result.securityFindings) {
     securityFindings = result.securityFindings;
-    updateBadge();
   }
+  if (result.libraryFindings) {
+    libraryFindings = result.libraryFindings;
+  }
+  updateBadge();
 }).catch((err) => {
   console.error('Failed to load settings from storage:', err);
 });
@@ -1010,6 +1388,42 @@ browser.webRequest.onHeadersReceived.addListener(
                   });
                 }
               }
+              
+              // Background library scanning - detect vulnerable JS libraries
+              if (captureEnabled && LibraryScanner.initialized) {
+                const isJs = contentType && (
+                  contentType.includes('javascript') || 
+                  contentType.includes('text/javascript') ||
+                  LibraryScanner.isJavaScriptUrl(details.url)
+                );
+                
+                if (isJs) {
+                  const libResults = LibraryScanner.scan(details.url, text);
+                  if (libResults && libResults.totalFindings > 0) {
+                    libResults.requestId = request.id;
+                    libraryFindings.push(libResults);
+                    
+                    // Limit stored findings
+                    if (libraryFindings.length > MAX_LIBRARY_FINDINGS) {
+                      libraryFindings = libraryFindings.slice(-MAX_LIBRARY_FINDINGS);
+                    }
+                    
+                    // Persist findings to storage
+                    browser.storage.local.set({ libraryFindings }).catch(err => {
+                      console.error('Failed to save library findings:', err);
+                    });
+                    
+                    // Update badge
+                    updateBadge();
+                    
+                    // Notify DevTools if connected
+                    notifyDevTools({
+                      type: 'libraryFinding',
+                      finding: libResults
+                    });
+                  }
+                }
+              }
             }
             
             notifyDevTools({
@@ -1113,7 +1527,8 @@ browser.runtime.onConnect.addListener((port) => {
       interceptEnabled: interceptEnabled,
       interceptSettings: interceptSettings,
       requests: Array.from(requests.values()),
-      securityFindings: securityFindings
+      securityFindings: securityFindings,
+      libraryFindings: libraryFindings
     });
     
     port.onMessage.addListener((msg) => {
@@ -1215,6 +1630,15 @@ function handleDevToolsMessage(msg, port) {
     case 'clearSecurityFindings':
       clearSecurityFindings();
       notifyDevTools({ type: 'securityFindingsCleared' });
+      break;
+      
+    case 'getLibraryFindings':
+      port.postMessage({ type: 'libraryFindingsResponse', findings: libraryFindings });
+      break;
+      
+    case 'clearLibraryFindings':
+      clearLibraryFindings();
+      notifyDevTools({ type: 'libraryFindingsCleared' });
       break;
       
     case 'forwardResponse':

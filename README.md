@@ -11,6 +11,7 @@ A lightweight Firefox extension for capturing, analyzing, and modifying HTTP/HTT
 - **Response Interception**: Intercept and modify responses before they reach the browser
 - **Match & Replace**: Create rules to automatically modify request URL, headers, or body content
 - **Security Scanner**: Automatically scan response bodies for sensitive data and security issues
+- **Vulnerable JS Library Scanner**: Detect outdated JavaScript libraries with known CVEs (Thanks to Retire.js)
 - **Request Repeater**: Resend requests with custom modifications for testing
 - **Advanced Filtering**: Filter requests by method, URL patterns, and file types
 - **Responsive UI**: Optimized layout that automatically adapts to vertical split views or narrower windows
@@ -68,6 +69,13 @@ The built-in security scanner automatically analyzes response bodies while you b
 - **API Endpoints**: Hardcoded fetch/axios/XHR URLs and API base configurations
 - **Sensitive Files**: Environment files (.env), SSH keys, Git exposure, backup files
 
+**Database Connection URLs:**
+- **MongoDB**: Connection URLs with embedded credentials (`mongodb://`, `mongodb+srv://`)
+- **PostgreSQL**: Connection URLs (`postgres://`, `postgresql://`)
+- **MySQL**: Connection URLs (`mysql://`)
+- **Redis**: Connection URLs (`redis://`)
+- **RabbitMQ**: Connection URLs (`amqp://`)
+
 **Features:**
 - Background scanning even when DevTools is closed (with Capture enabled)
 - Real-time scanning with badge notification on extension icon
@@ -77,6 +85,32 @@ The built-in security scanner automatically analyzes response bodies while you b
 - Export findings as JSON for further analysis
 - False positive filtering for placeholder values
 - JSON and config file format support
+
+### Vulnerable JavaScript Library Scanner (Beta)
+
+Automatically detects outdated JavaScript libraries with known security vulnerabilities, similar to [Retire.js](https://github.com/AleenCloud/retire.js).
+
+**How It Works:**
+- Scans JavaScript files loaded by websites
+- Detects library versions via filename patterns, URL paths, and file content signatures
+- Checks versions against a bundled vulnerability database (64+ libraries)
+- Displays CVE identifiers, CWE categories, and severity ratings
+
+**Supported Libraries Include:**
+| Category | Libraries |
+|----------|-----------|
+| **DOM/UI** | jQuery, jQuery UI, jQuery Mobile, jQuery Migrate, Bootstrap, Angular, AngularJS, React, Vue.js, Ember.js, Backbone.js |
+| **Utilities** | Lodash, Underscore.js, Moment.js, Handlebars, Mustache |
+| **Editors** | TinyMCE, CKEditor, CodeMirror |
+| **Media** | Video.js, jPlayer, Plyr |
+| **Other** | D3.js, Chart.js, Socket.io, Three.js, Knockout, YUI, Prototype.js, Dojo, MooTools |
+
+**Features:**
+- Offline detection using bundled vulnerability database
+- Merged findings for same library+version with multiple vulnerabilities
+- Clickable CVE links to NVD database
+- Severity-based filtering (Critical, High, Medium, Low)
+- Detection method indicator (filename, URI, or file content)
 
 ## Screenshots
 
@@ -148,6 +182,7 @@ The extension is built using vanilla JavaScript with the Firefox WebExtensions A
 │   ├── panel.css              # Styles with theme support
 │   └── security-scanner.js    # Security scanning module
 ├── icons/                     # Extension icons
+├── jsrepository.json          # Vulnerable JS library database (Retire.js format)
 └── manifest.json              # Extension manifest
 ```
 
