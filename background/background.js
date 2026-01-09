@@ -65,13 +65,16 @@ const SecurityScanner = {
         { pattern: /sk-[a-zA-Z0-9_-]{32,}/g, type: 'OpenAI API Key (Generic)', severity: 'critical', strict: true },
         
         // Stripe
-        { pattern: /sk_live_[0-9a-zA-Z]{24}/g, type: 'Stripe Live Secret Key', severity: 'critical', strict: true },
+        { pattern: /sk_live_[0-9a-zA-Z]{24,}/g, type: 'Stripe Live Secret Key', severity: 'critical', strict: true },
         { pattern: /sk_test_[0-9a-zA-Z]{24}/g, type: 'Stripe Test Secret Key', severity: 'medium', strict: true },
         { pattern: /rk_live_[0-9a-zA-Z]{99}/g, type: 'Stripe Restricted Key', severity: 'critical', strict: true },
         
         // Slack
         { pattern: /xoxb-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}/g, type: 'Slack Bot Token', severity: 'critical', strict: true },
         { pattern: /xoxp-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}/g, type: 'Slack User Token', severity: 'critical', strict: true },
+        { pattern: /xoxa-[0-9]+-[0-9]+-[0-9a-zA-Z]{24,}/g, type: 'Slack App Token', severity: 'critical', strict: true },
+        { pattern: /xoxr-[0-9]+-[0-9a-zA-Z]{24,}/g, type: 'Slack Refresh Token', severity: 'critical', strict: true },
+        { pattern: /xoxs-[0-9]+-[0-9]+-[0-9a-zA-Z]{24,}/g, type: 'Slack Session Token', severity: 'critical', strict: true },
         { pattern: /xoxe\.xoxp-1-[0-9a-zA-Z]{166}/g, type: 'Slack Config Token', severity: 'critical', strict: true },
         { pattern: /xoxe-1-[0-9a-zA-Z]{147}/g, type: 'Slack Refresh Token', severity: 'critical', strict: true },
         { pattern: /T[a-zA-Z0-9_]{8}\/B[a-zA-Z0-9_]{8}\/[a-zA-Z0-9_]{24}/g, type: 'Slack Webhook', severity: 'high', strict: true },
@@ -140,6 +143,13 @@ const SecurityScanner = {
         { pattern: /["']?(?:password|passwd|pwd)["']?\s*[:=]\s*["']([^"']{6,})["']/gi, type: 'Password', severity: 'critical', strict: false },
         { pattern: /["']?(?:db[_-]?password|database[_-]?password)["']?\s*[:=]\s*["']([^"']{6,})["']/gi, type: 'Database Password', severity: 'critical', strict: false },
         { pattern: /["']?(?:connection[_-]?string|conn[_-]?str|database[_-]?url|db[_-]?url)["']?\s*[:=]\s*["']([^"']+)["']/gi, type: 'Connection String', severity: 'critical', strict: false },
+        
+        // Database URLs with credentials
+        { pattern: /mongodb(?:\+srv)?:\/\/[^\s"'<>]+:[^\s"'<>]+@[^\s"'<>]+/gi, type: 'MongoDB Connection URL', severity: 'critical', strict: true },
+        { pattern: /postgres(?:ql)?:\/\/[^\s"'<>]+:[^\s"'<>]+@[^\s"'<>]+/gi, type: 'PostgreSQL Connection URL', severity: 'critical', strict: true },
+        { pattern: /mysql:\/\/[^\s"'<>]+:[^\s"'<>]+@[^\s"'<>]+/gi, type: 'MySQL Connection URL', severity: 'critical', strict: true },
+        { pattern: /redis:\/\/[^\s"'<>]+:[^\s"'<>]+@[^\s"'<>]+/gi, type: 'Redis Connection URL', severity: 'critical', strict: true },
+        { pattern: /amqp:\/\/[^\s"'<>]+:[^\s"'<>]+@[^\s"'<>]+/gi, type: 'RabbitMQ Connection URL', severity: 'critical', strict: true },
     ],
 
     falsePositives: [
