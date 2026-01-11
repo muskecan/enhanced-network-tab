@@ -29,6 +29,166 @@ let requestCounter = 0;
 let highlightRules = [];
 let matchReplaceRules = [];
 
+// Use devtools.network API to catch service worker responses that bypass webRequest API
+let pendingHarEntries = []; // Buffer for HAR events that haven't matched yet
+
+function updateRequestFromHar(request, harEntry) {
+    const statusCode = harEntry.response?.status;
+    const statusText = harEntry.response?.statusText || '';
+    
+    request.statusCode = statusCode;
+    request.statusLine = `HTTP/1.1 ${statusCode} ${statusText}`;
+    request.completed = true;
+    
+    // Extract request headers from HAR
+    if (harEntry.request?.headers && (!request.requestHeaders || Object.keys(request.requestHeaders).length === 0)) {
+        request.requestHeaders = {};
+        for (const header of harEntry.request.headers) {
+            request.requestHeaders[header.name] = header.value;
+        }
+    }
+    
+    // Extract request body from HAR (for POST/PUT requests)
+    if (harEntry.request?.postData && !request.requestBody) {
+        request.requestBody = harEntry.request.postData.text || '';
+        if (harEntry.request.postData.params && !request.requestBody) {
+            // URL-encoded form data
+            request.requestBody = harEntry.request.postData.params
+                .map(p => `${encodeURIComponent(p.name)}=${encodeURIComponent(p.value || '')}`)
+                .join('&');
+        }
+    }
+    
+    // Extract request size
+    if (harEntry.request?.bodySize > 0 && !request.requestSize) {
+        request.requestSize = harEntry.request.bodySize;
+    }
+    
+    // Extract response headers from HAR
+    if (harEntry.response?.headers && (!request.responseHeaders || Object.keys(request.responseHeaders).length === 0)) {
+        request.responseHeaders = {};
+        for (const header of harEntry.response.headers) {
+            request.responseHeaders[header.name] = header.value;
+        }
+    }
+    
+    // Extract response size
+    if (harEntry.response?.bodySize > 0) {
+        request.responseSize = harEntry.response.bodySize;
+    } else if (harEntry.response?.content?.size > 0) {
+        request.responseSize = harEntry.response.content.size;
+    }
+    
+    // Try to get response body from HAR content.text first (available in getHAR results)
+    if (harEntry.response?.content?.text && !request.responseBody) {
+        request.responseBody = harEntry.response.content.text;
+    }
+    
+    // Try to get response body via getContent() if available (only works on event listener entries)
+    if (typeof harEntry.getContent === 'function' && !request.responseBody) {
+        harEntry.getContent((content, encoding) => {
+            if (content) {
+                request.responseBody = content;
+                // Re-render if this request is selected
+                if (selectedRequest && selectedRequest.id === request.id) {
+                    displayRequestDetails(request);
+                }
+            }
+        });
+    }
+}
+
+function tryMatchHarEntry(harEntry) {
+    const url = harEntry.request?.url;
+    if (!url) return false;
+    
+    // Find matching request by URL - search from newest to oldest
+    for (let i = requests.length - 1; i >= 0; i--) {
+        const r = requests[i];
+        if (r.url === url && (r.statusCode === null || r.statusCode === undefined)) {
+            updateRequestFromHar(r, harEntry);
+            return true;
+        }
+    }
+    return false;
+}
+
+function processPendingHarEntries() {
+    if (pendingHarEntries.length === 0) return;
+    
+    const stillPending = [];
+    let matched = false;
+    for (const harEntry of pendingHarEntries) {
+        if (!tryMatchHarEntry(harEntry)) {
+            // Keep entries that are less than 5 seconds old
+            if (Date.now() - harEntry._timestamp < 5000) {
+                stillPending.push(harEntry);
+            }
+        } else {
+            matched = true;
+        }
+    }
+    pendingHarEntries = stillPending;
+    
+    if (matched) {
+        renderRequestList();
+    }
+}
+
+if (browser.devtools && browser.devtools.network) {
+    // Listen for request completions from devtools.network API
+    browser.devtools.network.onRequestFinished.addListener((harEntry) => {
+        const url = harEntry.request?.url;
+        const statusCode = harEntry.response?.status;
+        
+        if (!url || statusCode === undefined) return;
+        
+        // Try to match immediately
+        if (!tryMatchHarEntry(harEntry)) {
+            // Buffer for later matching (request might not be in our list yet)
+            harEntry._timestamp = Date.now();
+            pendingHarEntries.push(harEntry);
+        }
+        
+        renderRequestList();
+        if (selectedRequest) {
+            const updated = requests.find(r => r.id === selectedRequest.id);
+            if (updated) displayRequestDetails(updated);
+        }
+    });
+    
+    // Periodically try to match buffered HAR entries
+    setInterval(processPendingHarEntries, 500);
+    
+    // Poll getHAR periodically to catch any completions missed by the event listener
+    setInterval(() => {
+        browser.devtools.network.getHAR().then(harLog => {
+            if (!harLog || !harLog.entries) return;
+            
+            let updated = false;
+            for (const entry of harLog.entries) {
+                const url = entry.request?.url;
+                const statusCode = entry.response?.status;
+                if (!url || !statusCode) continue;
+                
+                // Find a pending request with this URL
+                for (let i = requests.length - 1; i >= 0; i--) {
+                    const r = requests[i];
+                    if (r.url === url && (r.statusCode === null || r.statusCode === undefined)) {
+                        updateRequestFromHar(r, entry);
+                        updated = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (updated) {
+                renderRequestList();
+            }
+        }).catch(() => {});
+    }, 1000);
+}
+
 // Security Scanner State
 let securityFindings = []; // All findings from all requests
 let libraryFindings = []; // Vulnerable library findings
