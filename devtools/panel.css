@@ -1707,6 +1707,32 @@ body.dark-mode .syntax-comment { color: #8b949e; }
     gap: 4px;
 }
 
+.finding-source {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-secondary);
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.finding-source-label {
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.finding-source-link {
+    color: var(--link-color, #58a6ff);
+    cursor: pointer;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.finding-source-link:hover {
+    text-decoration: underline;
+    color: var(--link-hover-color, #79b8ff);
+}
+
 /* Security Tab Content */
 .security-tab-title {
     font-weight: 600;

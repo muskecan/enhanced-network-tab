@@ -1043,7 +1043,8 @@ function renderSecurityFindingsList() {
                         
                         group.items.push({
                             ...item,
-                            requestId: finding.requestId
+                            requestId: finding.requestId,
+                            sourceUrl: finding.url
                         });
                     });
                 }
@@ -1131,7 +1132,8 @@ function renderSecurityFindingsList() {
                 version: libEntry.version,
                 detectedVia: libEntry.detectedVia,
                 vulnerabilities: filteredVulns, // All vulnerabilities for this lib
-                requestId: libEntry.requestId
+                requestId: libEntry.requestId,
+                sourceUrl: libEntry.url
             });
         });
     }
@@ -1177,6 +1179,33 @@ function renderSecurityFindingsList() {
             </div>
         `;
     }
+}
+
+/**
+ * Navigate to a request from a security finding.
+ * Closes the security modal, selects the request, and scrolls to it.
+ */
+function navigateToRequest(requestId) {
+    // Close the security modal
+    securityModal.classList.remove('show');
+    
+    // Find the request
+    const request = requests.find(r => r.id === requestId);
+    if (!request) return;
+    
+    // Select the request
+    selectedRequest = request;
+    displayRequestDetails(request);
+    
+    // Highlight and scroll to the row in the request list
+    const rows = document.querySelectorAll('#requestList tr');
+    rows.forEach(row => {
+        row.classList.remove('selected');
+        if (row.dataset.requestId === requestId) {
+            row.classList.add('selected');
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    });
 }
 
 /**
@@ -1244,7 +1273,23 @@ function createLibraryFindingElement(item, id) {
         `;
     }).join('');
     
-    body.innerHTML = `<div class="vuln-cards">${vulnCards}</div>`;
+    // Truncate source URL for display
+    const sourceDisplay = item.sourceUrl
+        ? (item.sourceUrl.length > 80 ? '...' + item.sourceUrl.slice(-77) : item.sourceUrl)
+        : '';
+    
+    body.innerHTML = `<div class="vuln-cards">${vulnCards}</div>${item.sourceUrl ? `<div class="finding-source"><span class="finding-source-label">Source:</span> <a class="finding-source-link" title="${escapeHTML(item.sourceUrl)}">${escapeHTML(sourceDisplay)}</a></div>` : ''}`;
+    
+    // Attach click handler on source link to navigate to the request
+    if (item.sourceUrl && item.requestId) {
+        const sourceLink = body.querySelector('.finding-source-link');
+        if (sourceLink) {
+            sourceLink.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigateToRequest(item.requestId);
+            });
+        }
+    }
     
     // Add click event listener to header
     header.addEventListener('click', () => {
@@ -1286,6 +1331,12 @@ function createFindingItemElement(item, id) {
     const body = document.createElement('div');
     body.className = 'finding-body';
     body.id = `finding-body-${id}`;
+    
+    // Truncate source URL for display
+    const sourceDisplay = item.sourceUrl
+        ? (item.sourceUrl.length > 80 ? '...' + item.sourceUrl.slice(-77) : item.sourceUrl)
+        : '';
+    
     body.innerHTML = `
         <div class="finding-match">${escapeHTML(item.match)}</div>
         ${item.context ? `<div class="finding-context">${escapeHTML(item.context)}</div>` : ''}
@@ -1293,7 +1344,19 @@ function createFindingItemElement(item, id) {
             ${item.line ? `<span>Line: ${item.line}</span>` : ''}
             ${item.extractedValue && item.extractedValue !== item.match ? `<span>Value: ${escapeHTML(item.extractedValue.substring(0, 50))}${item.extractedValue.length > 50 ? '...' : ''}</span>` : ''}
         </div>
+        ${item.sourceUrl ? `<div class="finding-source"><span class="finding-source-label">Source:</span> <a class="finding-source-link" title="${escapeHTML(item.sourceUrl)}">${escapeHTML(sourceDisplay)}</a></div>` : ''}
     `;
+    
+    // Attach click handler on source link to navigate to the request
+    if (item.sourceUrl && item.requestId) {
+        const sourceLink = body.querySelector('.finding-source-link');
+        if (sourceLink) {
+            sourceLink.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigateToRequest(item.requestId);
+            });
+        }
+    }
     
     // Add click event listener to header
     header.addEventListener('click', () => {
@@ -1800,6 +1863,15 @@ port.onMessage.addListener((msg) => {
                     if (!securityFindings.some(f => f.url === finding.url && f.timestamp === finding.timestamp)) {
                         securityFindings.push(finding);
                     }
+                    // Populate per-request findings map so Security tab appears when selecting the request
+                    if (finding.requestId && !requestFindings.has(finding.requestId)) {
+                        requestFindings.set(finding.requestId, finding);
+                        const req = requests.find(r => r.id === finding.requestId);
+                        if (req) {
+                            req.hasSecurityFindings = true;
+                            req.securityFindingsCount = finding.totalFindings;
+                        }
+                    }
                 });
                 unseenFindingsCount = msg.securityFindings.reduce((acc, f) => acc + f.totalFindings, 0);
             }
@@ -1913,6 +1985,10 @@ port.onMessage.addListener((msg) => {
             // New security finding from background scanner
             if (msg.finding && !securityFindings.some(f => f.url === msg.finding.url && f.timestamp === msg.finding.timestamp)) {
                 securityFindings.push(msg.finding);
+                // Mark request as scanned so the updateRequest handler won't re-scan
+                if (msg.finding.requestId) {
+                    requestFindings.set(msg.finding.requestId, msg.finding);
+                }
                 unseenFindingsCount += msg.finding.totalFindings;
                 updateSecurityBadge();
                 renderSecurityFindingsList();
@@ -2146,6 +2222,7 @@ function renderRequestList() {
     
     sortedRequests.forEach(req => {
         const row = document.createElement('tr');
+        row.dataset.requestId = req.id;
         
         // Apply highlighting rules
         for (const rule of highlightRules) {
@@ -2492,8 +2569,8 @@ function formatModifiedRequestContent(request, view) {
 
 function formatResponseContent(request, view) {
     // Check if response is an image
-    const contentType = Object.entries(request.responseHeaders || {})
-        .find(([key, value]) => key.toLowerCase() === 'content-type')?.[1] || '';
+    const contentType = (Object.entries(request.responseHeaders || {})
+        .find(([key, value]) => key.toLowerCase() === 'content-type')?.[1] || '').toLowerCase();
     
     const isImage = contentType.match(/^image\/(png|jpe?g|gif|svg\+xml|webp|ico|bmp)/i);
     const isHTMLContent = contentType.includes('html') || isHTML(request.responseBody || '');
@@ -2594,9 +2671,9 @@ function tryParseJSON(text) {
 function formatBody(body, headers) {
     if (!body) return '';
     
-    // Get content type from headers
-    const contentType = Object.entries(headers || {})
-        .find(([key, value]) => key.toLowerCase() === 'content-type')?.[1] || '';
+    // Get content type from headers (lowercased for case-insensitive matching)
+    const contentType = (Object.entries(headers || {})
+        .find(([key, value]) => key.toLowerCase() === 'content-type')?.[1] || '').toLowerCase();
     
     // Try to format based on content type or content detection
     if (contentType.includes('json') || isJSON(body)) {
@@ -2723,6 +2800,13 @@ function clearRequestDetails() {
     }
 }
 
+function shellEscapeSingleQuote(str) {
+    // In POSIX shell, single-quoted strings cannot contain single quotes.
+    // The idiom is: end the single quote, add an escaped single quote, restart single quote.
+    // e.g. "can't" becomes 'can'\''t'
+    return str.replace(/'/g, "'\\''");
+}
+
 function generateCurl(request) {
     const method = request.originalMethod || request.method;
     const url = request.originalUrl || request.url;
@@ -2733,15 +2817,15 @@ function generateCurl(request) {
     
     for (const [key, value] of Object.entries(headers)) {
         if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
-            curl += ` \\\n  -H '${key}: ${value}'`;
+            curl += ` \\\n  -H '${shellEscapeSingleQuote(`${key}: ${value}`)}'`;
         }
     }
     
     if (body) {
-        curl += ` \\\n  -d '${body.replace(/'/g, "\\'")}'`;
+        curl += ` \\\n  -d '${shellEscapeSingleQuote(body)}'`;
     }
     
-    curl += ` \\\n  '${url}'`;
+    curl += ` \\\n  '${shellEscapeSingleQuote(url)}'`;
     
     return curl;
 }
@@ -2756,15 +2840,15 @@ function generateModifiedCurl(request) {
     
     for (const [key, value] of Object.entries(headers)) {
         if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
-            curl += ` \\\n  -H '${key}: ${value}'`;
+            curl += ` \\\n  -H '${shellEscapeSingleQuote(`${key}: ${value}`)}'`;
         }
     }
     
     if (body) {
-        curl += ` \\\n  -d '${body.replace(/'/g, "\\'")}'`;
+        curl += ` \\\n  -d '${shellEscapeSingleQuote(body)}'`;
     }
     
-    curl += ` \\\n  '${url}'`;
+    curl += ` \\\n  '${shellEscapeSingleQuote(url)}'`;
     
     return curl;
 }

@@ -1219,9 +1219,9 @@ browser.webRequest.onHeadersReceived.addListener(
     
     const shouldInterceptResponse = interceptedRequestIds.has(details.requestId);
     
-    const contentType = details.responseHeaders?.find(h => 
+    const contentType = (details.responseHeaders?.find(h => 
       h.name.toLowerCase() === 'content-type'
-    )?.value || '';
+    )?.value || '').toLowerCase();
     
     const isTextContent = contentType.includes('json') || 
         contentType.includes('text') || 
@@ -1701,7 +1701,7 @@ async function resendModifiedRequest(request, modifiedRequest) {
         responseHeaders[key] = value;
       });
       
-      const contentType = response.headers.get('content-type') || '';
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
       let responseBody = '';
       
       // Determine status line - use HTTP/1.1 as fallback if protocol not available
@@ -1776,7 +1776,23 @@ async function handleForwardRequest(requestId, modifiedRequest) {
     const wasModified = urlChanged || methodChanged || headersChanged || bodyChanged;
     
     if (pending.stage === 'onBeforeRequest') {
-        if (urlChanged) {
+        if (methodChanged || bodyChanged) {
+             // Method/body changes require cancel + resend (onBeforeRequest API only supports redirectUrl)
+             request.originalUrl = pending.url;
+             request.originalMethod = pending.method;
+             request.originalBody = pending.requestBody;
+             request.modifiedUrl = modifiedRequest.url;
+             request.modifiedMethod = modifiedRequest.method;
+             request.modifiedBody = modifiedRequest.body;
+             request.wasModified = true;
+             request.intercepted = false;
+             
+             pending.resolve({ cancel: true });
+             pendingRequests.delete(originalRequestId);
+             
+             resendModifiedRequest(request, modifiedRequest);
+             return;
+        } else if (urlChanged) {
              request.originalUrl = pending.url;
              request.modifiedUrl = modifiedRequest.url;
              request.wasModified = true;
@@ -1963,7 +1979,18 @@ function handleForwardResponse(requestId, modifiedResponse) {
         });
       }
       
-      const modifiedData = new TextEncoder().encode(modifiedResponse.body || pending.responseBody);
+      const bodyToForward = modifiedResponse.body || pending.responseBody;
+      let modifiedData;
+      if (pending.isBase64) {
+        // Decode base64 back to binary for image/binary responses
+        const binaryString = atob(bodyToForward);
+        modifiedData = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          modifiedData[i] = binaryString.charCodeAt(i);
+        }
+      } else {
+        modifiedData = new TextEncoder().encode(bodyToForward);
+      }
       pending.filter.write(modifiedData);
       pending.filter.close();
       
